@@ -282,7 +282,7 @@ participant = (
 ceis = (
     spark.table("trusted.judicial_sanctions_public_data.tb_ceis")
     .select(
-        col("SanctionedCpfOrCnpjNum").alias("DocumentNumberCd"),
+        col("SanctionedCpfOrCnpjCd").alias("DocumentNumberCd"),
         concat_ws("-", col("SanctionCodeCd"), col("SanctionCategoryDesc")).alias("CEISIncidence")
     )
 )
@@ -290,7 +290,7 @@ ceis = (
 cepim = (
     spark.table("trusted.judicial_sanctions_public_data.tb_cepim")
     .select(
-        col("EntityCnpjNum").alias("DocumentNumberCd"),
+        col("EntityCnpjCd").alias("DocumentNumberCd"),
         concat_ws("-", col("AgreementNum"), col("GrantingAgencyDesc")).alias("CEPIMIncidence")
     )
 )
@@ -298,7 +298,7 @@ cepim = (
 cnep = (
     spark.table("trusted.judicial_sanctions_public_data.tb_cnep")
     .select(
-        col("SanctionedCpfOrCnpjNum").alias("DocumentNumberCd"),
+        col("SanctionedCpfOrCnpjCd").alias("DocumentNumberCd"),
         concat_ws("-", col("SanctionCodeCd"), col("SanctionCategoryDesc")).alias("CNEPIncidence")
     )
 )
@@ -306,7 +306,7 @@ cnep = (
 leniency = (
     spark.table("trusted.judicial_sanctions_public_data.tb_leniency_agreements")
     .select(
-        col("SanctionedCompanyCnpjNum").alias("DocumentNumberCd"),
+        col("SanctionedCompanyCnpjCd").alias("DocumentNumberCd"),
         concat_ws("-", col("ProcessNum"), col("SanctioningOfficeDesc")).alias("LeniencyIncidence")
     )
 )
@@ -557,7 +557,7 @@ base = (
     )
     .join(
         spark.table("trusted.payment_scheme_record.tb_user")
-            .select("UserId", "UserName", "EmailAddressTxt", "StatusId", "DocumentNumberNum"),
+            .select("UserId", "UserName", "EmailAddressTxt", "StatusId", "DocumentNumberCd"),
         "UserId",
         "left"
     )
