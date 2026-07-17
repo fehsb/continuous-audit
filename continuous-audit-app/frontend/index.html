@@ -1052,7 +1052,8 @@ function FPUnmarkConfirm({onConfirm, onClose}) {
 
 // ── AchadosModal ──────────────────────────────────────────────────────────────
 function AchadosModal({testId, testName, execDates, onClose}) {
-  const [dateFrom, setDateFrom] = useState(execDates[0]||"");
+  const [dateSel,  setDateSel]  = useState("latest");  // "latest" | "all" | "<YYYY-MM-DD>"
+  const [dateFrom, setDateFrom] = useState("");        // custom range — overrides dateSel when set
   const [dateTo,   setDateTo]   = useState("");
   const [search,   setSearch]   = useState("");
   const [data,     setData]     = useState(null);
@@ -1063,14 +1064,30 @@ function AchadosModal({testId, testName, execDates, onClose}) {
   const [fpMarkRow,   setFpMarkRow]   = useState(null);
   const [fpUnmarkRow, setFpUnmarkRow] = useState(null);
 
-  function loadData(from, to) {
+  // Build the date params from the current mode. A custom De/Até range overrides
+  // the "Execução" select; otherwise: "all" → every date, "latest" → backend default,
+  // a specific date → exactly that day. `override` avoids stale-state on auto-apply.
+  function loadData(override) {
+    const sel  = override?.dateSel  ?? dateSel;
+    const from = override?.dateFrom ?? dateFrom;
+    const to   = override?.dateTo   ?? dateTo;
+    const p = {};
+    if (from || to) {
+      p.date_from = from || "";
+      p.date_to   = to   || "";
+    } else if (sel === "all") {
+      p.all_dates = true;
+    } else if (sel && sel !== "latest") {
+      p.date_from = sel;
+      p.date_to   = sel;
+    }
     setLoad(true); setEx(null);
-    api.getIncidents(testId, {date_from:from||"", date_to:to||""})
+    api.getIncidents(testId, p)
       .then(d=>{ setData(d); setAllDates(d.exec_dates||allDates); setLoad(false); })
       .catch(e=>{ setData({error:e.message}); setLoad(false); });
   }
 
-  useEffect(()=>{ loadData(dateFrom, dateTo); }, []);
+  useEffect(()=>{ loadData(); }, []);
 
   async function doMarkFP(row, note, criteria) {
     setFpMarkRow(null);
@@ -1084,7 +1101,7 @@ function AchadosModal({testId, testName, execDates, onClose}) {
                         row_hash: row._row_hash, row_data});
     } catch(e) {}
     setFpActing(null);
-    loadData(dateFrom, dateTo);
+    loadData();
   }
 
   async function doUnmarkFP(row) {
@@ -1095,7 +1112,7 @@ function AchadosModal({testId, testName, execDates, onClose}) {
       if (row._fp_id) await api.unmarkFP(row._fp_id);
     } catch(e) {}
     setFpActing(null);
-    loadData(dateFrom, dateTo);
+    loadData();
   }
 
   const displayCols = (data?.columns||[]).filter(c=>c!=="ArchiveDate");
@@ -1127,8 +1144,10 @@ function AchadosModal({testId, testName, execDates, onClose}) {
         <div style={{display:"flex",gap:12,padding:"12px 22px",borderBottom:"1px solid var(--border)",background:"var(--surface-alt)",flexWrap:"wrap",alignItems:"flex-end"}}>
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
             <span style={{fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>Execução</span>
-            <select className="field-select" style={{minWidth:160}} value={dateFrom} onChange={e=>{setDateFrom(e.target.value);}}>
-              <option value="">Todas as datas</option>
+            <select className="field-select" style={{minWidth:170}} value={dateSel}
+              onChange={e=>{ const v=e.target.value; setDateSel(v); setDateFrom(""); setDateTo(""); loadData({dateSel:v, dateFrom:"", dateTo:""}); }}>
+              <option value="latest">Última execução</option>
+              <option value="all">Todas as datas</option>
               {allDates.map(d=><option key={d} value={d}>{d}</option>)}
             </select>
           </div>
@@ -1140,9 +1159,14 @@ function AchadosModal({testId, testName, execDates, onClose}) {
             <span style={{fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>Até</span>
             <input type="date" className="field-input" style={{width:140}} value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
           </div>
-          <button className="btn btn-primary btn-sm" onClick={()=>loadData(dateFrom,dateTo)} disabled={loading}>
+          <button className="btn btn-primary btn-sm" onClick={()=>loadData()} disabled={loading}>
             {loading?"⏳":"⟳"} Buscar
           </button>
+          {(dateFrom || dateTo) && (
+            <button className="btn btn-ghost btn-sm" onClick={()=>{ setDateFrom(""); setDateTo(""); loadData({dateFrom:"", dateTo:""}); }}>
+              ✕ Limpar intervalo
+            </button>
+          )}
           <div style={{marginLeft:"auto"}}>
             <input className="inp-search" placeholder="🔍 Buscar em todos os campos..." style={{width:240}} value={search} onChange={e=>{setSearch(e.target.value);setEx(null);}}/>
           </div>

@@ -655,6 +655,7 @@ def get_incidents(
     date_from: Optional[str] = None,   # YYYY-MM-DD
     date_to:   Optional[str] = None,
     search:    Optional[str] = None,   # free text search across all string columns
+    all_dates: bool = False,           # True → return every execution (no date filter)
     limit:     int = 500,
     user: User = Depends(get_user),
 ):
@@ -663,7 +664,9 @@ def get_incidents(
     full_table = f"{CATALOG}.{SCHEMA}.{table}"
     try:
         # Build date filter
-        if date_from and date_to:
+        if all_dates:
+            date_filter = "1=1"
+        elif date_from and date_to:
             date_filter = f"DATE(ArchiveDate) BETWEEN '{date_from}' AND '{date_to}'"
         elif date_from:
             date_filter = f"DATE(ArchiveDate) >= '{date_from}'"
