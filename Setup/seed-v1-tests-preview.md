@@ -70,8 +70,6 @@ df_incidents = (
     .where(col("HasCerc") == 0)
     .select("UserId", "EmailAddressTxt", "UserName", "CompanyList")
 )
-
-df_incidents.display()
 ```
 
 ### new-participants-validation  
@@ -262,8 +260,6 @@ df_incidents = (
     .agg(countDistinct("ParticipantId").alias("CountParticipantId"))
     .where(col("CountParticipantId") > lit("1"))
 )
-
-display(df_incidents)
 ```
 
 ### participants-with-judicial-sanctions  
@@ -329,8 +325,6 @@ df_incidents = (
     )
     .dropDuplicates(["DocumentNumberCd"])
 )
-
-df_incidents.display()
 ```
 
 ### participants-with-unmatched-document-number  
@@ -363,8 +357,6 @@ df_incidents = (
         "RootDocumentCd"
     )
 )
-
-df_incidents.display()
 ```
 
 ### participants-without-digital-onboarding  
@@ -516,8 +508,6 @@ df_incidents = (
         "CreatedById"
     )
 )
-
-display(df_incidents)
 ```
 
 ### participants-without-valid-phone-number  
@@ -542,8 +532,6 @@ df_incidents = (
     spark.table("trusted.payment_scheme_record.tb_participant")
     .where((col("StatusId") == "1") & invalid_phone)
 )
-
-display(df_incidents)
 ```
 
 ### users-with-many-distinct-ips-per-day  
@@ -1245,8 +1233,6 @@ employees
     "DateDifference"
 )
 )
-
-df_incidents.display()
 ```
 
 ### access-control-list-changes  
