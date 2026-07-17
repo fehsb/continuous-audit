@@ -922,35 +922,102 @@ function AchadosTab({testId, testName}) {
 }
 
 // ── FPMarkModal ────────────────────────────────────────────────────────────────
-function FPMarkModal({onConfirm, onClose}) {
-  const [note, setNote] = useState("");
+function FPMarkModal({row, columns, onConfirm, onClose}) {
+  const [selected, setSelected] = useState([]);   // column names, max 3
+  const [note,     setNote]     = useState("");
+
+  const cols = (columns || []).filter(c => c !== "ArchiveDate" && !c.startsWith("_"));
+
+  function toggle(c) {
+    setSelected(sel => sel.includes(c)
+      ? sel.filter(x => x !== c)
+      : (sel.length >= 3 ? sel : [...sel, c]));
+  }
+
+  // Preserve column order as it appears in the table
+  const criteria = cols
+    .filter(c => selected.includes(c))
+    .map(c => ({column: c, value: row[c] == null ? "" : String(row[c])}));
+  const canConfirm = criteria.length >= 1 && note.trim();
+
   return (
     <div className="overlay" style={{zIndex:300}} onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="modal" style={{width:460}}>
+      <div className="modal" style={{width:580,maxHeight:"92vh",display:"flex",flexDirection:"column"}}>
         <div className="modal-head">
           <div>
             <div className="modal-title">⚑ Marcar como Falso Positivo</div>
-            <div className="modal-sub">Um comentário é obrigatório para rastreabilidade</div>
+            <div className="modal-sub">Escolha de 1 a 3 campos que identificam este falso positivo</div>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
         </div>
-        <div className="modal-body">
+
+        <div className="modal-body" style={{overflowY:"auto"}}>
+          <div style={{fontSize:12.5,color:"var(--text-muted)",marginBottom:12,lineHeight:1.55}}>
+            Um achado futuro será tratado como este falso positivo quando <strong>todos</strong> os
+            campos selecionados tiverem exatamente estes valores — independente da data de execução
+            ou dos demais campos.
+          </div>
+
+          {/* Column picker */}
+          <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:6,maxHeight:300,
+                       overflowY:"auto",border:"1px solid var(--border)",borderRadius:"var(--rs)",padding:8}}>
+            {cols.length === 0 ? (
+              <div style={{fontSize:12,color:"var(--text-subtle)",padding:"8px"}}>Nenhuma coluna disponível.</div>
+            ) : cols.map(c => {
+              const on = selected.includes(c);
+              const disabled = !on && selected.length >= 3;
+              const val = row[c] == null ? "" : String(row[c]);
+              return (
+                <label key={c} style={{display:"flex",alignItems:"flex-start",gap:9,padding:"7px 9px",
+                    borderRadius:"var(--rs)",cursor:disabled?"not-allowed":"pointer",
+                    background:on?"var(--primary-soft)":"transparent",opacity:disabled?0.4:1,
+                    border:`1px solid ${on?"var(--primary-b)":"transparent"}`}}>
+                  <input type="checkbox" checked={on} disabled={disabled} onChange={()=>toggle(c)} style={{marginTop:3}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:10,fontFamily:"var(--mono)",color:"var(--text-muted)",
+                                 textTransform:"uppercase",letterSpacing:".4px"}}>{c}</div>
+                    <div style={{fontSize:13,color:"var(--text)",wordBreak:"break-word"}}>
+                      {val !== "" ? val : <em style={{color:"var(--text-subtle)"}}>(vazio)</em>}
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+          <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:14,textAlign:"right"}}>
+            {selected.length}/3 selecionados
+          </div>
+
+          {/* Rule preview */}
+          {criteria.length > 0 && (
+            <div style={{background:"var(--surface-alt)",border:"1px solid var(--border)",
+                         borderRadius:"var(--rs)",padding:"10px 12px",marginBottom:14,fontSize:12.5,lineHeight:1.7}}>
+              <span style={{color:"var(--text-muted)"}}>Regra: </span>
+              {criteria.map((c,i)=>(
+                <span key={c.column}>
+                  {i>0 && <span style={{color:"var(--primary)",fontWeight:700}}> E </span>}
+                  <span style={{fontFamily:"var(--mono)"}}>{c.column}</span>
+                  <span style={{color:"var(--text-muted)"}}> = </span>
+                  <span style={{fontFamily:"var(--mono)",background:"#fef9c3",borderRadius:2,padding:"0 3px"}}>
+                    {c.value !== "" ? c.value : "(vazio)"}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Note */}
           <div className="field">
             <label className="field-label">Comentário <span className="req">*</span></label>
-            <textarea
-              className="field-textarea" rows={3}
-              value={note} onChange={e=>setNote(e.target.value)}
-              placeholder="Explique por que este achado é um falso positivo..."
-              autoFocus
-            />
-          </div>
-          <div style={{fontSize:12,color:"var(--text-subtle)",marginTop:8}}>
-            Esta marcação suprime a linha em todas as execuções futuras com o mesmo hash.
+            <textarea className="field-textarea" rows={3} value={note} onChange={e=>setNote(e.target.value)}
+              placeholder="Explique por que este achado é um falso positivo..."/>
           </div>
         </div>
+
         <div className="modal-foot">
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-warning" onClick={()=>note.trim()&&onConfirm(note.trim())} disabled={!note.trim()}>
+          <button className="btn btn-warning" disabled={!canConfirm}
+            onClick={()=>canConfirm && onConfirm(note.trim(), criteria)}>
             ⚑ Confirmar FP
           </button>
         </div>
@@ -970,7 +1037,8 @@ function FPUnmarkConfirm({onConfirm, onClose}) {
         </div>
         <div className="modal-body">
           <p style={{fontSize:13,color:"var(--text-muted)"}}>
-            A linha voltará a ser contada como achado real na próxima execução do teste.
+            A regra de falso positivo será desativada. Todos os achados que correspondiam
+            a estes critérios voltarão a ser contabilizados como achados reais na próxima execução do teste.
           </p>
         </div>
         <div className="modal-foot">
@@ -1004,14 +1072,17 @@ function AchadosModal({testId, testName, execDates, onClose}) {
 
   useEffect(()=>{ loadData(dateFrom, dateTo); }, []);
 
-  async function doMarkFP(row, note) {
+  async function doMarkFP(row, note, criteria) {
     setFpMarkRow(null);
     setFpActing(row._row_hash);
-    // Strip internal fields — only send business data as row_data
+    // Strip internal fields — only send business data as row_data (reference)
     const row_data = Object.fromEntries(
       Object.entries(row).filter(([k]) => !k.startsWith("_") && k !== "ArchiveDate")
     );
-    try { await api.markFP({test_name: testName, row_hash: row._row_hash, note, row_data}); } catch(e) {}
+    try {
+      await api.markFP({test_name: testName, match_criteria: criteria, note,
+                        row_hash: row._row_hash, row_data});
+    } catch(e) {}
     setFpActing(null);
     loadData(dateFrom, dateTo);
   }
@@ -1020,9 +1091,8 @@ function AchadosModal({testId, testName, execDates, onClose}) {
     setFpUnmarkRow(null);
     setFpActing(row._row_hash);
     try {
-      const fps = await api.listFPs(testId).catch(()=>[]);
-      const fp  = Array.isArray(fps) && fps.find(f => f.row_hash === row._row_hash && f.active);
-      if (fp) await api.unmarkFP(fp.fp_id);
+      // The matched FP id is attached to the row by the backend
+      if (row._fp_id) await api.unmarkFP(row._fp_id);
     } catch(e) {}
     setFpActing(null);
     loadData(dateFrom, dateTo);
@@ -1193,7 +1263,8 @@ function AchadosModal({testId, testName, execDates, onClose}) {
         </div>
       </div>
     </div>
-    {fpMarkRow && <FPMarkModal onConfirm={note=>doMarkFP(fpMarkRow,note)} onClose={()=>setFpMarkRow(null)}/>}
+    {fpMarkRow && <FPMarkModal row={fpMarkRow} columns={displayCols}
+      onConfirm={(note,criteria)=>doMarkFP(fpMarkRow,note,criteria)} onClose={()=>setFpMarkRow(null)}/>}
     {fpUnmarkRow && <FPUnmarkConfirm onConfirm={()=>doUnmarkFP(fpUnmarkRow)} onClose={()=>setFpUnmarkRow(null)}/>}
     </>
   );
@@ -1630,28 +1701,70 @@ function parseRowData(rowDataStr) {
   } catch(e) { return []; }
 }
 
-function RowExpandPanel({rowDataStr, colSpan}) {
-  const entries = parseRowData(rowDataStr);
-  if (!entries.length) return (
-    <tr><td colSpan={colSpan} style={{padding:"10px 20px",fontSize:12,color:"var(--text-subtle)",
-        background:"#fafbff",borderBottom:"1px solid var(--border)"}}>
-      Dados do achado não disponíveis (FP marcado antes do histórico ser habilitado).
-    </td></tr>
+function parseCriteria(raw) {
+  if (!raw) return [];
+  try {
+    const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(arr) ? arr : [];
+  } catch(e) { return []; }
+}
+
+function CriteriaChips({criteria}) {
+  const parsed = parseCriteria(criteria);
+  if (parsed.length === 0) {
+    return <span style={{fontSize:12,color:"var(--text-subtle)",fontStyle:"italic"}}>
+      Correspondência por linha completa (FP legado)
+    </span>;
+  }
+  return (
+    <div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
+      {parsed.map((c,i)=>(
+        <React.Fragment key={i}>
+          {i>0 && <span style={{color:"var(--primary)",fontWeight:700,fontSize:11}}>E</span>}
+          <span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,
+            background:"var(--surface)",border:"1px solid var(--border)",borderRadius:20,padding:"2px 10px"}}>
+            <span style={{fontFamily:"var(--mono)",color:"var(--text-muted)"}}>{c.column}</span>
+            <span style={{color:"var(--text-subtle)"}}>=</span>
+            <span style={{fontFamily:"var(--mono)",fontWeight:600}}>{c.value===""||c.value==null?"(vazio)":String(c.value)}</span>
+          </span>
+        </React.Fragment>
+      ))}
+    </div>
   );
+}
+
+function RowExpandPanel({criteria, rowDataStr, colSpan}) {
+  const entries = parseRowData(rowDataStr);
   return (
     <tr>
       <td colSpan={colSpan} style={{padding:0,borderBottom:"1px solid var(--border)"}}>
-        <div style={{padding:"12px 20px",background:"#fafbff",
-                     display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:"10px 16px"}}>
-          {entries.map(([k,v]) => (
-            <div key={k} style={{display:"flex",flexDirection:"column",gap:2}}>
-              <span style={{fontFamily:"var(--mono)",fontSize:9.5,textTransform:"uppercase",
-                            letterSpacing:".4px",color:"var(--text-subtle)"}}>{k}</span>
-              <span style={{fontSize:12.5,color:"var(--text)",wordBreak:"break-word",lineHeight:1.5}}>
-                {String(v)}
-              </span>
-            </div>
-          ))}
+        <div style={{padding:"12px 20px",background:"#fafbff"}}>
+          <div style={{fontFamily:"var(--mono)",fontSize:9.5,textTransform:"uppercase",
+                       letterSpacing:".4px",color:"var(--text-subtle)",marginBottom:7}}>
+            Critérios de correspondência
+          </div>
+          <div style={{marginBottom:entries.length?16:0}}>
+            <CriteriaChips criteria={criteria}/>
+          </div>
+          {entries.length > 0 && (
+            <>
+              <div style={{fontFamily:"var(--mono)",fontSize:9.5,textTransform:"uppercase",
+                           letterSpacing:".4px",color:"var(--text-subtle)",marginBottom:7}}>
+                Achado de origem
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:"10px 16px"}}>
+                {entries.map(([k,v]) => (
+                  <div key={k} style={{display:"flex",flexDirection:"column",gap:2}}>
+                    <span style={{fontFamily:"var(--mono)",fontSize:9.5,textTransform:"uppercase",
+                                  letterSpacing:".4px",color:"var(--text-subtle)"}}>{k}</span>
+                    <span style={{fontSize:12.5,color:"var(--text)",wordBreak:"break-word",lineHeight:1.5}}>
+                      {String(v)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </td>
     </tr>
@@ -1746,7 +1859,8 @@ function FalsePositivesPage({onOpenTest}) {
                 <tr>
                   <th style={{width:28}}/>
                   <th style={{minWidth:160}}>Teste</th>
-                  <th style={{minWidth:200}}>Comentário</th>
+                  <th style={{minWidth:220}}>Critérios</th>
+                  <th style={{minWidth:180}}>Comentário</th>
                   <th style={{minWidth:140}}>Marcado por</th>
                   <th style={{minWidth:120}}>Data</th>
                   <th style={{width:100}}/>
@@ -1768,6 +1882,9 @@ function FalsePositivesPage({onOpenTest}) {
                                title={fp.test_description}>{fp.test_description}</div>
                         )}
                       </td>
+                      <td style={{padding:"8px 12px"}}>
+                        <CriteriaChips criteria={fp.match_criteria}/>
+                      </td>
                       <td style={{fontSize:13,color:"var(--text-muted)",fontStyle:fp.note?"normal":"italic"}}>
                         {fp.note||"—"}
                       </td>
@@ -1784,7 +1901,7 @@ function FalsePositivesPage({onOpenTest}) {
                         </button>
                       </td>
                     </tr>
-                    {expanded===fp.fp_id && <RowExpandPanel rowDataStr={fp.row_data} colSpan={6}/>}
+                    {expanded===fp.fp_id && <RowExpandPanel criteria={fp.match_criteria} rowDataStr={fp.row_data} colSpan={7}/>}
                   </React.Fragment>
                 ))}
               </tbody>

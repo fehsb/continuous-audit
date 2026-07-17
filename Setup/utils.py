@@ -25,6 +25,7 @@ from pyspark.sql.functions import *
 from pyspark.sql.types import *
 from datetime import datetime
 import hashlib
+import json
 import os
 import traceback
 import textwrap
@@ -176,34 +177,81 @@ def save_incident_hash(test_name, incident_hash, row_count, is_suppressed, is_re
 def add_fp_flags(df: DataFrame, test_name: str) -> DataFrame:
     """
     Adiciona coluna _is_false_positive ao DataFrame antes de persistir.
-    Calcula o SHA256 de cada linha (mesma lógica de compute_incident_hash,
-    excluindo ArchiveDate) e marca True as linhas cujo hash conste em
-    tb_false_positives com active = true para este teste.
+
+    Modelo por critérios: cada FP em tb_false_positives define de 1 a 3 pares
+    (coluna, valor) em match_criteria (JSON). Uma linha é falso positivo se
+    satisfizer TODOS os critérios de algum FP ativo — independente de data ou
+    dos demais campos. FPs antigos sem match_criteria continuam funcionando
+    por hash da linha inteira (compatibilidade retroativa).
     """
     try:
         fp_rows = spark.sql(f"""
-            SELECT row_hash
+            SELECT row_hash, match_criteria
             FROM {CATALOG}.{SCHEMA}.tb_false_positives
             WHERE test_name = '{test_name}' AND active = true
         """).collect()
-        fp_hashes = [r["row_hash"] for r in fp_rows]
     except Exception:
-        fp_hashes = []
+        # Coluna match_criteria pode não existir ainda — cai no schema legado
+        try:
+            fp_rows = spark.sql(f"""
+                SELECT row_hash
+                FROM {CATALOG}.{SCHEMA}.tb_false_positives
+                WHERE test_name = '{test_name}' AND active = true
+            """).collect()
+        except Exception:
+            fp_rows = []
 
-    if not fp_hashes:
+    available     = set(df.columns)
+    criteria_conds = []   # uma Column booleana por FP com critérios
+    legacy_hashes  = []   # row_hash de FPs antigos sem critérios
+
+    for r in fp_rows:
+        d = r.asDict()
+        parsed = None
+        raw = d.get("match_criteria")
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = None
+        if parsed:
+            cond, valid = None, True
+            for c in parsed:
+                cname = c.get("column")
+                cval  = "" if c.get("value") is None else str(c.get("value"))
+                if cname not in available:
+                    valid = False
+                    break
+                # coalesce(…, "") espelha str(None) → "" no lado Python
+                pred = coalesce(col(cname).cast("string"), lit("")) == lit(cval)
+                cond = pred if cond is None else (cond & pred)
+            if valid and cond is not None:
+                criteria_conds.append(cond)
+        elif d.get("row_hash"):
+            legacy_hashes.append(d["row_hash"])
+
+    if not criteria_conds and not legacy_hashes:
         return df.withColumn("_is_false_positive", lit(False))
 
-    # Exclude ArchiveDate and any internal _-prefixed columns (same rule as Python's _row_hash)
-    hash_cols = sorted([c for c in df.columns if c != "ArchiveDate" and not c.startswith("_")])
-    # coalesce(…, "") mirrors Python's str(None) → "" so both sides produce identical hashes
-    df_hashed = df.withColumn(
-        "_row_hash_tmp",
-        sha2(concat_ws("|", *[coalesce(col(c).cast("string"), lit("")) for c in hash_cols]), 256)
-    )
-    return df_hashed.withColumn(
-        "_is_false_positive",
-        col("_row_hash_tmp").isin(fp_hashes)
-    ).drop("_row_hash_tmp")
+    match_expr = None
+    for cond in criteria_conds:
+        match_expr = cond if match_expr is None else (match_expr | cond)
+
+    result = df
+    if legacy_hashes:
+        # Exclude ArchiveDate and internal _-prefixed columns (same rule as Python's _row_hash)
+        hash_cols = sorted([c for c in df.columns if c != "ArchiveDate" and not c.startswith("_")])
+        result = result.withColumn(
+            "_row_hash_tmp",
+            sha2(concat_ws("|", *[coalesce(col(c).cast("string"), lit("")) for c in hash_cols]), 256)
+        )
+        hash_cond  = col("_row_hash_tmp").isin(legacy_hashes)
+        match_expr = hash_cond if match_expr is None else (match_expr | hash_cond)
+
+    result = result.withColumn("_is_false_positive", match_expr)
+    if "_row_hash_tmp" in result.columns:
+        result = result.drop("_row_hash_tmp")
+    return result
 
 
 def get_previous_hash(test_name: str) -> dict | None:

@@ -688,27 +688,56 @@ def get_incidents(
             LIMIT {limit}
         """)
 
-        # Add per-row hash, false-positive flag and FP metadata
+        # Load active FPs (criteria-based, with legacy row_hash fallback)
         try:
             fp_rows = db.query(
-                f"SELECT row_hash, note, marked_by, marked_at FROM {CATALOG}.{SCHEMA}.tb_false_positives"
-                f" WHERE test_name = %(n)s AND active = true",
+                f"SELECT fp_id, row_hash, match_criteria, note, marked_by, marked_at "
+                f"FROM {CATALOG}.{SCHEMA}.tb_false_positives "
+                f"WHERE test_name = %(n)s AND active = true",
                 {"n": test["test_name"]}
             )
-            fp_meta = {r["row_hash"]: r for r in fp_rows}
         except Exception:
-            fp_meta = {}
+            # match_criteria column may not exist yet — fall back to legacy schema
+            try:
+                fp_rows = db.query(
+                    f"SELECT fp_id, row_hash, note, marked_by, marked_at "
+                    f"FROM {CATALOG}.{SCHEMA}.tb_false_positives "
+                    f"WHERE test_name = %(n)s AND active = true",
+                    {"n": test["test_name"]}
+                )
+            except Exception:
+                fp_rows = []
+
+        # Pre-parse criteria JSON once
+        fps = []
+        for fr in fp_rows:
+            criteria = None
+            raw = fr.get("match_criteria")
+            if raw:
+                try:
+                    criteria = json.loads(raw)
+                except Exception:
+                    criteria = None
+            fps.append({**fr, "_criteria": criteria})
 
         for row in rows:
-            h = _row_hash(row)
-            row["_row_hash"] = h
-            if h in fp_meta:
+            row["_row_hash"] = _row_hash(row)
+            matched = None
+            for fp in fps:
+                if fp.get("_criteria"):
+                    if _row_matches_criteria(row, fp["_criteria"]):
+                        matched = fp; break
+                elif fp.get("row_hash") and fp["row_hash"] == row["_row_hash"]:
+                    matched = fp; break
+            if matched:
                 row["_is_false_positive"] = True
-                row["_fp_note"]      = fp_meta[h].get("note", "")
-                row["_fp_marked_by"] = fp_meta[h].get("marked_by", "")
-                row["_fp_marked_at"] = fp_meta[h].get("marked_at")
+                row["_fp_id"]        = matched.get("fp_id")
+                row["_fp_note"]      = matched.get("note", "")
+                row["_fp_marked_by"] = matched.get("marked_by", "")
+                row["_fp_marked_at"] = matched.get("marked_at")
             else:
                 row["_is_false_positive"] = False
+                row["_fp_id"]        = None
                 row["_fp_note"]      = None
                 row["_fp_marked_by"] = None
                 row["_fp_marked_at"] = None
@@ -980,10 +1009,41 @@ def activate_test(test_id: str, user: User = Depends(get_user)):
 # Routes — false positives
 # ─────────────────────────────────────────────────────────────────────────────
 class FalsePositiveIn(BaseModel):
-    test_name: str
-    row_hash:  str
-    note:      Optional[str] = ""
-    row_data:  Optional[dict] = None   # business columns of the silenced row
+    test_name:      str
+    match_criteria: Optional[list] = None   # [{"column","value"}, ...] — 1–3 predicates, row matches if it satisfies ALL
+    note:           Optional[str] = ""
+    row_hash:       Optional[str] = None    # originating row hash (reference / legacy fallback)
+    row_data:       Optional[dict] = None   # business columns of the originating row
+
+
+def _normalize_criteria(raw) -> list:
+    """Validate & normalize match_criteria into a list of 1–3 {column, value} predicates."""
+    if not raw or not isinstance(raw, list):
+        raise HTTPException(400, "Selecione de 1 a 3 critérios para o falso positivo")
+    out = []
+    for item in raw:
+        col = str((item or {}).get("column", "")).strip()
+        if not col or not _COL_RE.match(col):
+            raise HTTPException(400, f"Coluna inválida no critério: {col!r}")
+        val = (item or {}).get("value")
+        out.append({"column": col, "value": "" if val is None else str(val)})
+    if not (1 <= len(out) <= 3):
+        raise HTTPException(400, "Selecione de 1 a 3 critérios para o falso positivo")
+    cols = [c["column"] for c in out]
+    if len(set(cols)) != len(cols):
+        raise HTTPException(400, "Não repita a mesma coluna nos critérios")
+    return out
+
+
+def _row_matches_criteria(row: dict, criteria: list) -> bool:
+    """True if the row satisfies ALL {column, value} predicates (string comparison, null → '')."""
+    for c in criteria:
+        want = "" if c.get("value") is None else str(c.get("value"))
+        got  = row.get(c.get("column"))
+        got  = "" if got is None else str(got)
+        if got != want:
+            return False
+    return True
 
 
 _FP_HISTORY_CREATE = f"""
@@ -1036,22 +1096,39 @@ def list_false_positives(test_id: str, user: User = Depends(get_user)):
         return {"error": str(e), "data": []}
 
 
+_FP_ADD_CRITERIA_COL = (
+    f"ALTER TABLE {CATALOG}.{SCHEMA}.tb_false_positives ADD COLUMNS (match_criteria STRING)"
+)
+_FP_INSERT = (
+    f"INSERT INTO {CATALOG}.{SCHEMA}.tb_false_positives "
+    "(fp_id, test_name, row_hash, match_criteria, marked_by, marked_at, note, active) "
+    "VALUES (%(id)s, %(tn)s, %(rh)s, %(mc)s, %(by)s, %(now)s, %(note)s, true)"
+)
+
+
 @app.post("/api/false-positives", status_code=201)
 def mark_false_positive(body: FalsePositiveIn, user: User = Depends(get_user)):
     if not body.note or not body.note.strip():
         raise HTTPException(400, "O comentário é obrigatório ao marcar um Falso Positivo")
+    criteria = _normalize_criteria(body.match_criteria)
     fp_id = str(uuid.uuid4())
-    # INSERT uses the original tb_false_positives schema — no ALTER TABLE needed
-    db.execute(
-        f"INSERT INTO {CATALOG}.{SCHEMA}.tb_false_positives "
-        "(fp_id, test_name, row_hash, marked_by, marked_at, note, active) "
-        "VALUES (%(id)s, %(tn)s, %(rh)s, %(by)s, %(now)s, %(note)s, true)",
-        {"id": fp_id, "tn": body.test_name, "rh": body.row_hash,
-         "by": user.email, "now": datetime.utcnow(), "note": body.note or ""}
-    )
-    # row_data lives only in history — no schema change required on tb_false_positives
+    params = {
+        "id": fp_id, "tn": body.test_name, "rh": body.row_hash,
+        "mc": json.dumps(criteria, ensure_ascii=False),
+        "by": user.email, "now": datetime.utcnow(), "note": body.note or "",
+    }
+    try:
+        db.execute(_FP_INSERT, params)
+    except Exception:
+        # match_criteria column probably doesn't exist yet — add it, then retry once
+        try:
+            db.execute(_FP_ADD_CRITERIA_COL)
+        except Exception:
+            pass
+        db.execute(_FP_INSERT, params)
+    # row_data lives only in history
     row_data_json = json.dumps(body.row_data or {}, default=str)
-    _log_fp_history(fp_id, body.test_name, body.row_hash, row_data_json,
+    _log_fp_history(fp_id, body.test_name, body.row_hash or "", row_data_json,
                     "marked", body.note or "", user.email)
     return {"fp_id": fp_id}
 
@@ -1097,39 +1174,47 @@ def get_fp_history(limit: int = 200, user: User = Depends(get_user)):
 
 @app.get("/api/false-positives")
 def list_all_false_positives(user: User = Depends(get_user)):
-    """Global list of all active false positives with row_data from history."""
-    _base_query = f"""
-        SELECT
-            fp.fp_id, fp.test_name, fp.row_hash, fp.note, fp.marked_by, fp.marked_at,
-            tc.test_id, tc.description AS test_description,
-            tc.responsible_area, tc.status AS test_status
-            {{extra}}
-        FROM {CATALOG}.{SCHEMA}.tb_false_positives fp
-        LEFT JOIN {CATALOG}.{SCHEMA}.tb_test_configurations tc
-            ON tc.test_name = fp.test_name
-        {{join}}
-        WHERE fp.active = true
-        ORDER BY fp.marked_at DESC
-    """
-    try:
-        # Try with row_data from history
-        rows = db.query(_base_query.format(
-            extra=", h.row_data",
-            join=f"""LEFT JOIN (
-                SELECT fp_id, row_data
-                FROM {CATALOG}.{SCHEMA}.tb_false_positives_history
-                WHERE event_type = 'marked'
-            ) h ON h.fp_id = fp.fp_id"""
-        ))
-    except Exception:
-        # History table doesn't exist yet — return without row_data
+    """Global list of all active false positives with match_criteria + row_data from history."""
+    def _base_query(extra: str, join: str) -> str:
+        return f"""
+            SELECT
+                fp.fp_id, fp.test_name, fp.row_hash, fp.note, fp.marked_by, fp.marked_at,
+                tc.test_id, tc.description AS test_description,
+                tc.responsible_area, tc.status AS test_status
+                {extra}
+            FROM {CATALOG}.{SCHEMA}.tb_false_positives fp
+            LEFT JOIN {CATALOG}.{SCHEMA}.tb_test_configurations tc
+                ON tc.test_name = fp.test_name
+            {join}
+            WHERE fp.active = true
+            ORDER BY fp.marked_at DESC
+        """
+
+    _hist_join = f"""LEFT JOIN (
+        SELECT fp_id, row_data
+        FROM {CATALOG}.{SCHEMA}.tb_false_positives_history
+        WHERE event_type = 'marked'
+    ) h ON h.fp_id = fp.fp_id"""
+
+    # Try progressively simpler queries so a missing column/table degrades gracefully
+    attempts = [
+        (", fp.match_criteria, h.row_data", _hist_join, None),
+        (", fp.match_criteria",             "",         {"row_data": None}),
+        (", h.row_data",                    _hist_join, {"match_criteria": None}),
+        ("",                                "",         {"match_criteria": None, "row_data": None}),
+    ]
+    last_err = None
+    for extra, join, defaults in attempts:
         try:
-            rows = db.query(_base_query.format(extra="", join=""))
-            for row in rows:
-                row["row_data"] = None
+            rows = db.query(_base_query(extra, join))
+            if defaults:
+                for row in rows:
+                    for k, v in defaults.items():
+                        row[k] = v
+            return {"items": rows, "count": len(rows)}
         except Exception as e:
-            raise HTTPException(400, f"Erro ao listar falsos positivos: {str(e)}")
-    return {"items": rows, "count": len(rows)}
+            last_err = e
+    raise HTTPException(400, f"Erro ao listar falsos positivos: {str(last_err)}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
