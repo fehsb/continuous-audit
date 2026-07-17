@@ -12,8 +12,10 @@ dbutils.widgets.text("catalog", "sandbox")
 dbutils.widgets.text("schema",  "grc")
 catalog = dbutils.widgets.get("catalog")
 schema  = dbutils.widgets.get("schema")
+dbutils.widgets.dropdown("force_daily", "false", ["false", "true"])
+force_daily = dbutils.widgets.get("force_daily") == "true"
 target  = f"{catalog}.{schema}.tb_test_configurations"
-print("Alvo:", target)
+print("Alvo:", target, "| force_daily:", force_daily)
 
 # COMMAND ----------
 
@@ -468,7 +470,8 @@ schema_def = StructType([
 ])
 rows = [(
     str(uuid.uuid4()), t["test_name"], t["output_table"], t["description"],
-    t["responsible_area"], t["risco_id"], int(t["threshold"]), t["frequency"],
+    t["responsible_area"], t["risco_id"], int(t["threshold"]),
+    ("DAILY" if force_daily else t["frequency"]),
     t["query_type"], t["imports"], t["query_code"], t["status"], t["category"],
     "v1-migration", None, None, now, now,
     (now if t["status"]=="ACTIVE" else None), 1, bool(t["should_activate_channel"]),
