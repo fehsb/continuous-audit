@@ -17,8 +17,10 @@ import validation
 # ─────────────────────────────────────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────────────────────────────────────
-CATALOG = "sandbox"
-SCHEMA  = "grc"
+# Environment-driven so the same code serves sandbox and production.
+# Override CA_CATALOG / CA_SCHEMA in app.yaml to flip environments.
+CATALOG = os.getenv("CA_CATALOG", "sandbox")
+SCHEMA  = os.getenv("CA_SCHEMA",  "grc")
 T_CFG   = f"{CATALOG}.{SCHEMA}.tb_test_configurations"
 T_HIST  = f"{CATALOG}.{SCHEMA}.tb_test_configurations_history"
 T_EXEC  = f"{CATALOG}.{SCHEMA}.tb_tests_executions"
