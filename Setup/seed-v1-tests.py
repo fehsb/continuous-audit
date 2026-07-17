@@ -277,7 +277,7 @@ TESTS = json.loads(r'''
   },
   {
     "test_name": "claude-token-audit-log",
-    "output_table": "tb_incidents_claude_audit_log_claude_token_audit_log",
+    "output_table": "tb_claude_audit_log_claude_token_audit_log",
     "description": "Detecta criacao/delecao de token e extracao explicita de dados via eventos de exportacao no Activity Feed da Compliance API (ultimos 3 dias).",
     "responsible_area": "Arquitetura",
     "risco_id": "R1474",

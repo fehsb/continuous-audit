@@ -19,7 +19,7 @@
 | 13 | ccb-dc-data-quality-relevant-timelines-after-tech-updates-10-dec-2025 | cedulas | ACTIVE | MONTHLY | 0 | sim | tb_incidents_cedulas_ccb_dc_data_quality_relevant_timelines_after_tech_updates_10_dec_2025 |
 | 14 | ccb-dc-data-quality-relevant-timelines-before-tech-updates-10-dec-2025 | cedulas | ACTIVE | MONTHLY | 0 | sim | tb_incidents_cedulas_ccb_dc_data_quality_relevant_timelines_before_tech_updates_10_dec_2025 |
 | 15 | cpr-data-quality-relevant-timelines-after-tech-updates-10-dec-2025 | cedulas | ACTIVE | MONTHLY | 0 | sim | tb_incidents_cedulas_cpr_data_quality_relevant_timelines_after_tech_updates_10_dec_2025 |
-| 16 | claude-token-audit-log | claude-audit-log | ACTIVE | DAILY | 0 | sim | tb_incidents_claude_audit_log_claude_token_audit_log |
+| 16 | claude-token-audit-log | claude-audit-log | ACTIVE | DAILY | 0 | sim | tb_claude_audit_log_claude_token_audit_log |
 | 17 | employees-with-other-active-companies | compliance | ACTIVE | MONTHLY | 0 | sim | tb_incidents_compliance_employees_with_other_active_companies |
 | 18 | access-control-list-changes | databricks-config | ACTIVE | DAILY | 0 | sim | tb_incidents_databricks_config_access_control_list_changes |
 | 19 | access-control-list-disable | databricks-config | ACTIVE | DAILY | 0 | sim | tb_incidents_databricks_config_access_control_list_disable |
