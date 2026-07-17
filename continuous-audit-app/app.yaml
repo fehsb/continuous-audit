@@ -1,0 +1,8 @@
+command:
+  - sh
+  - -c
+  - "uvicorn main:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"
+
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "ed5c06d0f073810c"

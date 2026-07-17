@@ -1,0 +1,3226 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Auditoria Contínua</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body,#root{height:100%}
+    :root{
+      --bg:#f0f2f8;--surface:#fff;--surface-alt:#f7f8fc;
+      --border:#e2e8f0;--border-strong:#cbd5e1;
+      --text:#0f172a;--text-muted:#64748b;--text-subtle:#94a3b8;
+      --primary:#4f46e5;--primary-h:#4338ca;--primary-soft:#eef2ff;--primary-b:#c7d2fe;
+      --success:#059669;--success-soft:#ecfdf5;--success-b:#6ee7b7;
+      --warning:#d97706;--warning-soft:#fffbeb;--warning-b:#fcd34d;
+      --danger:#dc2626;--danger-soft:#fef2f2;--danger-b:#fca5a5;
+      --purple:#7c3aed;--purple-soft:#f5f3ff;--purple-b:#c4b5fd;
+      --sidebar:#1e1b4b;--sidebar-w:220px;--sidebar-w-collapsed:52px;
+      --font:'Inter',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;
+      --r:10px;--rs:6px;--rl:14px;
+      --sh-sm:0 1px 3px rgba(0,0,0,.07);--sh:0 4px 16px rgba(0,0,0,.09);--sh-lg:0 12px 40px rgba(0,0,0,.13);
+    }
+    body{font-family:var(--font);font-size:14px;line-height:1.5;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased}
+    ::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}
+    /* ── Layout ── */
+    .app{display:flex;height:100vh;overflow:hidden}
+    /* ── Sidebar ── */
+    .sidebar{width:var(--sidebar-w);flex-shrink:0;background:var(--sidebar);display:flex;flex-direction:column;transition:width .2s ease;overflow:hidden}
+    .sidebar.collapsed{width:var(--sidebar-w-collapsed)}
+    .sidebar-top{display:flex;align-items:center;padding:14px 12px;border-bottom:1px solid rgba(255,255,255,.07);gap:8px;min-height:54px}
+    .hamburger{background:none;border:none;color:rgba(255,255,255,.7);cursor:pointer;padding:4px;border-radius:var(--rs);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:color .15s}
+    .hamburger:hover{color:#fff;background:rgba(255,255,255,.1)}
+    .brand-text{overflow:hidden;transition:opacity .2s,width .2s}
+    .brand-title{font-size:14px;font-weight:700;color:#fff;letter-spacing:-.2px;white-space:nowrap}
+    .sidebar.collapsed .brand-text{opacity:0;width:0;overflow:hidden}
+    .nav{flex:1;padding:8px 6px;display:flex;flex-direction:column;gap:2px}
+    .nav-item{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border-radius:var(--rs);font-size:13px;font-weight:400;color:rgba(255,255,255,.58);background:none;border:none;cursor:pointer;text-align:left;transition:all .15s;white-space:nowrap;overflow:hidden}
+    .nav-item:hover{background:rgba(255,255,255,.08);color:#fff}
+    .nav-item.active{background:rgba(255,255,255,.13);color:#fff;font-weight:500}
+    .nav-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center}
+    .nav-label{overflow:hidden;transition:opacity .2s,width .2s;white-space:nowrap}
+    .sidebar.collapsed .nav-label{opacity:0;width:0}
+    .nav-badge{margin-left:auto;background:#ef4444;color:#fff;font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:20px;flex-shrink:0;transition:opacity .2s}
+    .sidebar.collapsed .nav-badge{opacity:0}
+    .sidebar-footer{padding:8px 6px;border-top:1px solid rgba(255,255,255,.06)}
+    .user-pill{padding:7px 10px;border-radius:var(--rs);background:rgba(255,255,255,.06);overflow:hidden}
+    .user-email{font-size:11px;color:rgba(255,255,255,.5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:opacity .2s}
+    .sidebar.collapsed .user-email{opacity:0}
+    /* ── Main ── */
+    .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+    .topbar{height:54px;flex-shrink:0;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:12px}
+    .topbar-title{font-size:15px;font-weight:600;color:var(--text);flex:1;letter-spacing:-.3px}
+    .topbar-meta{font-family:var(--mono);font-size:11px;color:var(--text-subtle)}
+    .content{flex:1;overflow-y:auto;padding:24px}
+    /* ── Buttons ── */
+    .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 15px;border-radius:var(--rs);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;border:1px solid transparent;transition:all .15s;white-space:nowrap;line-height:1}
+    .btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}.btn-primary:hover{background:var(--primary-h)}.btn-primary:disabled{opacity:.45;cursor:not-allowed}
+    .btn-ghost{background:transparent;color:var(--text-muted);border-color:var(--border)}.btn-ghost:hover{background:var(--surface-alt);color:var(--text)}.btn-ghost:disabled{opacity:.4;cursor:not-allowed}
+    .btn-danger{background:transparent;color:var(--danger);border-color:var(--danger-b)}.btn-danger:hover{background:var(--danger-soft)}.btn-danger:disabled{opacity:.4;cursor:not-allowed}
+    .btn-success{background:var(--success);color:#fff}.btn-success:hover{filter:brightness(1.08)}.btn-success:disabled{opacity:.4;cursor:not-allowed}
+    .btn-warning{background:transparent;color:var(--warning);border-color:var(--warning-b)}.btn-warning:hover{background:var(--warning-soft)}
+    .btn-sm{padding:5px 11px;font-size:12px}.btn-xs{padding:3px 8px;font-size:11px}
+    /* ── Badges ── */
+    .badge{display:inline-flex;align-items:center;padding:2px 9px;border-radius:20px;font-family:var(--mono);font-size:11px;font-weight:500;border:1px solid transparent;white-space:nowrap}
+    .badge-active{background:var(--success-soft);color:var(--success);border-color:var(--success-b)}
+    .badge-draft{background:var(--surface-alt);color:var(--text-muted);border-color:var(--border)}
+    .badge-review{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-b)}
+    .badge-paused{background:var(--purple-soft);color:var(--purple);border-color:var(--purple-b)}
+    .badge-pdelete,.badge-rejected{background:var(--danger-soft);color:var(--danger);border-color:var(--danger-b)}
+    .badge-cancelled{background:var(--surface-alt);color:var(--text-subtle);border-color:var(--border)}
+    .badge-cleared{background:var(--success-soft);color:var(--success);border-color:var(--success-b)}
+    .badge-flagged{background:var(--danger-soft);color:var(--danger);border-color:var(--danger-b)}
+    .badge-error{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-b)}
+    .badge-sql{background:var(--primary-soft);color:var(--primary);border-color:var(--primary-b)}
+    .badge-python{background:var(--purple-soft);color:var(--purple);border-color:var(--purple-b)}
+    /* ── Stats ── */
+    .stats-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:22px}
+    .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;position:relative;overflow:hidden;box-shadow:var(--sh-sm)}
+    .stat-card::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px}
+    .stat-card.c-indigo::after{background:var(--primary)}.stat-card.c-slate::after{background:#64748b}
+    .stat-card.c-amber::after{background:#f59e0b}.stat-card.c-emerald::after{background:var(--success)}
+    .stat-card.c-rose::after{background:var(--danger)}.stat-card.c-orange::after{background:#ea580c}
+    .stat-label{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--text-muted)}
+    .stat-val{font-size:28px;font-weight:700;line-height:1;margin-top:7px;letter-spacing:-1px}
+    .stat-card.c-indigo .stat-val{color:var(--primary)}.stat-card.c-slate .stat-val{color:#475569}
+    .stat-card.c-amber .stat-val{color:#d97706}.stat-card.c-emerald .stat-val{color:var(--success)}
+    .stat-card.c-rose .stat-val{color:var(--danger)}.stat-card.c-orange .stat-val{color:#ea580c}
+    .stat-sub{font-size:10.5px;color:var(--text-subtle);margin-top:2px}
+    /* ── Table ── */
+    .table-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh-sm)}
+    .table-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 16px;border-bottom:1px solid var(--border)}
+    .table-title{font-size:13.5px;font-weight:600;flex:1;letter-spacing:-.2px}
+    .inp-search{background:var(--bg);border:1px solid var(--border);border-radius:var(--rs);padding:6px 11px;font-family:var(--font);font-size:13px;color:var(--text);outline:none;width:190px}
+    .inp-search:focus{border-color:var(--primary)}.inp-search::placeholder{color:var(--text-subtle)}
+    .sel-filter{background:var(--bg);border:1px solid var(--border);border-radius:var(--rs);padding:6px 10px;font-family:var(--font);font-size:13px;color:var(--text);outline:none;cursor:pointer}
+    table{width:100%;border-collapse:collapse}
+    thead tr{border-bottom:1px solid var(--border);background:var(--surface-alt)}
+    th{padding:9px 13px;text-align:left;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:500}
+    td{padding:11px 13px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+    tbody tr:last-child td{border-bottom:none}
+    tbody tr{cursor:pointer;transition:background .1s}
+    tbody tr:hover td{background:#f8faff}
+    .cell-name{font-weight:600;letter-spacing:-.1px}
+    .cell-sub{font-size:10px;color:var(--text-subtle);font-family:var(--mono);margin-top:2px}
+    .cell-mono{font-family:var(--mono);font-size:11.5px;color:var(--text-muted)}
+    .cell-count{font-family:var(--mono);font-size:13px;font-weight:600}
+    /* ── Modal ── */
+    .overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);backdrop-filter:blur(3px);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;animation:fi .15s ease}
+    @keyframes fi{from{opacity:0}to{opacity:1}}
+    .modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);width:700px;max-width:100%;max-height:92vh;display:flex;flex-direction:column;box-shadow:var(--sh-lg);animation:su .2s ease}
+    .modal-lg{width:860px}.modal-xl{width:1020px}
+    @keyframes su{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}
+    .modal-head{padding:18px 22px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:12px}
+    .modal-title{font-size:16px;font-weight:700;color:var(--text);flex:1;letter-spacing:-.4px}
+    .modal-sub{font-size:11px;color:var(--text-subtle);margin-top:3px}
+    .modal-body{flex:1;overflow-y:auto;padding:20px 22px}
+    .modal-foot{padding:13px 22px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:flex-end;gap:9px;background:var(--surface-alt);border-radius:0 0 var(--rl) var(--rl)}
+    /* ── Form ── */
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+    .form-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:13px}
+    .field{display:flex;flex-direction:column;gap:5px}
+    .field-label{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--text-muted);font-weight:500}
+    .req{color:#ef4444;margin-left:2px}
+    .field-input,.field-select{background:var(--bg);border:1px solid var(--border);border-radius:var(--rs);padding:8px 11px;font-family:var(--font);font-size:13px;color:var(--text);outline:none;width:100%;transition:border-color .15s}
+    .field-input:focus,.field-select:focus{border-color:var(--primary);background:#fff}
+    .field-input::placeholder{color:var(--text-subtle)}
+    .field-textarea{background:var(--bg);border:1px solid var(--border);border-radius:var(--rs);padding:8px 11px;font-family:var(--font);font-size:13px;color:var(--text);outline:none;resize:vertical;min-height:64px;width:100%;transition:border-color .15s}
+    .field-textarea:focus{border-color:var(--primary);background:#fff}
+    .inp-prefix-wrap{display:flex;align-items:center;border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;background:var(--bg)}
+    .inp-prefix-wrap:focus-within{border-color:var(--primary)}
+    .inp-prefix{padding:8px 10px;background:var(--border);color:var(--text-muted);font-family:var(--mono);font-size:11px;border-right:1px solid var(--border);white-space:nowrap;flex-shrink:0}
+    .inp-prefix-input{border:none;background:transparent;padding:8px 10px;font-family:var(--mono);font-size:12px;color:var(--text);outline:none;flex:1;min-width:0}
+    /* ── Code sections ── */
+    .code-section{border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;margin-bottom:10px}
+    .code-sec-hd{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--surface-alt);border-bottom:1px solid var(--border);font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted)}
+    .code-tag{padding:1px 7px;border-radius:10px;font-size:10px;font-weight:500}
+    .code-area{border:none;background:#fafbff;padding:11px 13px;font-family:var(--mono);font-size:12.5px;outline:none;resize:vertical;width:100%;line-height:1.75;min-height:56px}
+    .code-area.imports{color:#6d28d9;min-height:56px}
+    .code-area.query{color:#065f46;min-height:180px}
+    .code-area:focus{background:#f0f9ff}
+    .code-preview{background:#f8fafc;border:1px solid var(--border);border-radius:var(--rs);padding:10px 13px;font-family:var(--mono);font-size:12px;line-height:1.75;max-height:220px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+    .code-preview.imports{color:#6d28d9}.code-preview.query{color:#065f46}
+    /* ── Combobox ── */
+    .combobox{position:relative}
+    .cb-dropdown{position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);box-shadow:var(--sh);max-height:200px;overflow-y:auto;margin-top:3px}
+    .cb-item{padding:8px 12px;cursor:pointer;font-size:13px;transition:background .1s}
+    .cb-item:hover,.cb-item.focused{background:var(--primary-soft);color:var(--primary)}
+    .cb-empty{padding:10px 12px;font-size:12px;color:var(--text-subtle);font-style:italic}
+    /* ── Misc ── */
+    .type-toggle{display:inline-flex;border:1px solid var(--border);border-radius:var(--rs);overflow:hidden}
+    .type-opt{padding:7px 20px;font-family:var(--mono);font-size:12px;background:transparent;color:var(--text-muted);border:none;cursor:pointer;transition:all .15s}
+    .type-opt.active{background:var(--primary);color:#fff}
+    .divider{height:1px;background:var(--border);margin:16px 0}
+    .sec-title{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);margin-bottom:11px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+    .val-error{background:var(--danger-soft);border:1px solid var(--danger-b);border-radius:var(--rs);padding:9px 12px;font-family:var(--mono);font-size:12px;color:var(--danger);margin-top:7px;line-height:1.6}
+    .val-ok{background:var(--success-soft);border:1px solid var(--success-b);border-radius:var(--rs);padding:9px 12px;font-size:12px;color:var(--success);margin-top:7px}
+    .alert{padding:9px 13px;border-radius:var(--rs);font-size:12.5px;margin-bottom:12px}
+    .alert-warn{background:var(--warning-soft);color:var(--warning);border:1px solid var(--warning-b)}
+    .alert-info{background:var(--primary-soft);color:var(--primary);border:1px solid var(--primary-b)}
+    .toggle-row{display:flex;align-items:center;gap:9px;padding:8px 11px;background:var(--bg);border:1px solid var(--border);border-radius:var(--rs);cursor:pointer;width:fit-content}
+    .toggle-row input[type=checkbox]{width:14px;height:14px;accent-color:var(--primary);cursor:pointer}
+    /* ── Tabs ── */
+    .tabs{display:flex;border-bottom:1px solid var(--border);padding:0 22px;background:var(--surface)}
+    .tab{padding:9px 13px;border:none;background:none;font-size:13px;font-family:var(--font);cursor:pointer;color:var(--text-muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s}
+    .tab.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:500}
+    /* ── Review ── */
+    .review-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;margin-bottom:12px;box-shadow:var(--sh-sm);transition:box-shadow .15s}
+    .review-card:hover{box-shadow:var(--sh)}.review-card.delete-req{border-color:var(--danger-b);background:#fff8f8}
+    .review-card-head{display:flex;align-items:center;gap:8px;margin-bottom:11px}
+    .review-card-title{font-size:13.5px;font-weight:700;flex:1}
+    .review-meta{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:11px}
+    .meta-item{display:flex;flex-direction:column;gap:2px}
+    .meta-lbl{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-subtle)}
+    .meta-val{font-size:13px;font-weight:500}
+    .review-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:11px}
+    /* ── KV detail ── */
+    .kv-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
+    .kv-item{display:flex;flex-direction:column;gap:4px}
+    .kv-lbl{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-subtle)}
+    .kv-val{font-size:13px;font-weight:500}
+    /* ── Timeline ── */
+    .timeline{position:relative;padding-left:18px}
+    .timeline::before{content:'';position:absolute;left:5px;top:6px;bottom:0;width:1px;background:var(--border)}
+    .tl-item{position:relative;margin-bottom:14px}
+    .tl-dot{position:absolute;left:-16px;top:4px;width:8px;height:8px;border-radius:50%;border:2px solid var(--surface);background:var(--primary)}
+    .tl-dot.neg{background:var(--danger)}.tl-dot.warn{background:var(--warning)}
+    .tl-row{display:flex;align-items:center}
+    .tl-type{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--primary)}
+    .tl-type.neg{color:var(--danger)}.tl-type.warn{color:var(--warning)}
+    .tl-date{font-family:var(--mono);font-size:10.5px;color:var(--text-subtle);margin-left:auto}
+    .tl-by{font-size:11px;color:var(--text-muted);margin-top:1px}
+    .tl-comment{font-size:11px;color:var(--danger);font-style:italic;margin-top:2px}
+    /* ── Achados (expandable rows) ── */
+    .achados-row{cursor:pointer;transition:background .1s}
+    .achados-row:hover td{background:#f8faff}
+    .achados-row.expanded td{background:var(--primary-soft)}
+    .achados-expand{padding:0!important;border-bottom:1px solid var(--border)}
+    .achados-inner{padding:12px 16px;background:#fafbff;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+    .achado-field{display:flex;flex-direction:column;gap:3px}
+    .achado-lbl{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-subtle)}
+    .achado-val{font-size:12.5px;color:var(--text);word-break:break-word;line-height:1.5}
+    /* ── Preview table ── */
+    .prev-wrap{overflow-x:auto;max-height:160px;border-radius:var(--rs);border:1px solid var(--border);margin-top:6px}
+    .prev-wrap table{font-family:var(--mono);font-size:11px}
+    .prev-wrap th{background:var(--bg);padding:5px 10px;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:10px;white-space:nowrap}
+    .prev-wrap td{padding:4px 10px;border-bottom:1px solid var(--border);white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+    .prev-wrap tr:last-child td{border-bottom:none}
+    /* ── Toast ── */
+    .toast-wrap{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:7px}
+    .toast{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:10px 15px;font-size:13px;color:var(--text);box-shadow:var(--sh);min-width:240px;animation:su .2s ease}
+    .toast.success{border-left:3px solid var(--success)}.toast.error{border-left:3px solid var(--danger)}.toast.warning{border-left:3px solid var(--warning)}
+    /* ── Loading/empty ── */
+    .loading{display:flex;align-items:center;justify-content:center;padding:48px;color:var(--text-subtle);font-family:var(--mono);font-size:12px;gap:9px}
+    .spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .empty{text-align:center;padding:52px 24px;color:var(--text-muted)}
+    .empty-icon{font-size:34px;margin-bottom:10px;opacity:.4}.empty-title{font-size:14px;font-weight:600;color:var(--text-muted);margin-bottom:4px}.empty-sub{font-size:12px;color:var(--text-subtle)}
+    /* ── Dashboard ── */
+    .dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+    .dash-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;box-shadow:var(--sh-sm)}
+    .dash-card-title{font-size:13px;font-weight:600;margin-bottom:14px;color:var(--text)}
+    .dash-filters{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh-sm)}
+    .filter-group{display:flex;flex-direction:column;gap:4px}
+    .filter-label{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted)}
+    .filter-input{background:var(--bg);border:1px solid var(--border);border-radius:var(--rs);padding:6px 10px;font-family:var(--font);font-size:12.5px;color:var(--text);outline:none;min-width:140px}
+    .filter-input:focus{border-color:var(--primary)}
+    .kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px}
+    .kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;box-shadow:var(--sh-sm);position:relative;overflow:hidden}
+    .kpi-card::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+    .kpi-card.c-blue::after{background:#3b82f6}.kpi-card.c-indigo::after{background:var(--primary)}
+    .kpi-card.c-slate::after{background:#64748b}.kpi-card.c-green::after{background:var(--success)}
+    .kpi-card.c-red::after{background:var(--danger)}.kpi-card.c-amber::after{background:#f59e0b}
+    .kpi-label{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted)}
+    .kpi-val{font-size:26px;font-weight:700;line-height:1;margin-top:6px;letter-spacing:-1px}
+    .kpi-card.c-blue .kpi-val{color:#3b82f6}.kpi-card.c-indigo .kpi-val{color:var(--primary)}
+    .kpi-card.c-slate .kpi-val{color:#64748b}.kpi-card.c-green .kpi-val{color:var(--success)}
+    .kpi-card.c-red .kpi-val{color:var(--danger)}.kpi-card.c-amber .kpi-val{color:#d97706}
+    .open-entries-table{width:100%}
+    .open-entries-table td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:12.5px}
+    thead.sticky th{position:sticky;top:0;z-index:10}
+    .open-entries-table tr:last-child td{border-bottom:none}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ── API ──────────────────────────────────────────────────────────────────────
+async function req(method, path, body) {
+  const c = new AbortController(), t = setTimeout(() => c.abort(), 35000);
+  try {
+    const r = await fetch(`/api${path}`, {
+      method, signal: c.signal,
+      headers: body ? {"Content-Type":"application/json"} : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!r.ok) { const e = await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||"Erro inesperado"); }
+    return r.json();
+  } catch(e) {
+    if (e.name==="AbortError") throw new Error("timeout — warehouse iniciando, tente novamente");
+    throw e;
+  } finally { clearTimeout(t); }
+}
+const api = {
+  getUser:       ()          => req("GET",  "/user"),
+  getStats:      ()          => req("GET",  "/stats"),
+  listTests:     ()          => req("GET",  "/tests"),
+  getRisks:      ()          => req("GET",  "/risks"),
+  getAreas:      ()          => req("GET",  "/areas"),
+  getDashboard:  (p)         => req("GET",  "/dashboard?" + new URLSearchParams(p).toString()),
+  getHistory:    (id)        => req("GET",  `/tests/${id}/history`),
+  getExecutions: (id)        => req("GET",  `/tests/${id}/executions`),
+  getIncidents:  (id, p)     => req("GET",  `/tests/${id}/incidents?` + new URLSearchParams(Object.fromEntries(Object.entries(p||{}).filter(([,v])=>v))).toString()),
+  createTest:    (d,s)       => req("POST", `/tests?submit=${!!s}`, d),
+  editTest:      (id,d,s)    => req("PUT",  `/tests/${id}?submit=${!!s}`, d),
+  runPreview:    (d)         => req("POST", "/run-preview", d),
+  approve:       (id)        => req("POST", `/tests/${id}/approve`),
+  reject:        (id,r)      => req("POST", `/tests/${id}/reject`, {reason:r}),
+  pause:         (id)        => req("POST", `/tests/${id}/pause`),
+  activate:      (id)        => req("POST", `/tests/${id}/activate`),
+  requestDelete:     (id, reason)   => req("POST",   `/tests/${id}/request-delete`, {reason}),
+  listSuppressions:  (id)           => req("GET",    `/tests/${id}/suppressions`),
+  createSuppression: (id, body)     => req("POST",   `/tests/${id}/suppressions`, body),
+  deleteSuppress:    (sid)          => req("DELETE",  `/suppressions/${sid}`),
+  searchEntries:     (q, openOnly)  => req("GET",    `/risk-entries?q=${encodeURIComponent(q||"")}&open_only=${openOnly!==false}`),
+  getHashes:         (id)           => req("GET",    `/tests/${id}/hashes`),
+  markFP:            (body)         => req("POST",   "/false-positives", body),
+  unmarkFP:          (fp_id)        => req("DELETE",  `/false-positives/${fp_id}`),
+  listFPs:           (testId)       => req("GET",     `/tests/${testId}/false-positives`),
+  getAllFPs:         ()             => req("GET",      "/false-positives"),
+  getFPHistory:     ()             => req("GET",      "/false-positives/history"),
+  // Dashboard views (pages/tabs)
+  getDashViews:    ()              => req("GET",    "/dashboard-views"),
+  createDashView:  (body)          => req("POST",   "/dashboard-views", body),
+  updateDashView:  (id, body)      => req("PUT",    `/dashboard-views/${id}`, body),
+  deleteDashView:  (id)            => req("DELETE", `/dashboard-views/${id}`),
+  // Dashboard charts (widgets within a view)
+  listViewCharts:  (viewId)        => req("GET",    `/dashboard-views/${viewId}/charts`),
+  addChart:        (viewId, body)  => req("POST",   `/dashboard-views/${viewId}/charts`, body),
+  updateChart:     (chartId, body) => req("PUT",    `/dashboard-charts/${chartId}`, body),
+  deleteChart:     (chartId)       => req("DELETE", `/dashboard-charts/${chartId}`),
+  moveChart:       (chartId, dir)  => req("POST",   `/dashboard-charts/${chartId}/move`, {direction: dir}),
+  getChartData:    (chartId)       => req("GET",    `/dashboard-charts/${chartId}/data`),
+  getIncidentCols: (testId)        => req("GET",    `/tests/${testId}/incident-columns`),
+};
+
+// ── Validation ───────────────────────────────────────────────────────────────
+const SQL_BLK = ["DROP","CREATE","INSERT","DELETE","ALTER","UPDATE","TRUNCATE","REPLACE","MERGE","OVERWRITE"];
+const PY_BLK  = ["os.system","subprocess","__import__","open(","eval(","exec(",".write.","saveAsTable","insertInto"];
+function localValidate(type, imp, code) {
+  const src = `${imp||""}\n${code||""}`.toUpperCase();
+  return (type==="SQL"?SQL_BLK:PY_BLK).filter(k=>src.includes(k.toUpperCase()));
+}
+
+// ── Display ──────────────────────────────────────────────────────────────────
+const S_LABEL = {ACTIVE:"Ativo",DRAFT:"Rascunho",UNDER_REVIEW:"Em Revisão",PAUSED:"Pausado",CANCELLED:"Cancelado",REJECTED:"Rejeitado",PENDING_DELETE:"Excl. Pendente"};
+const S_CLS   = {ACTIVE:"active",DRAFT:"draft",UNDER_REVIEW:"review",PAUSED:"paused",CANCELLED:"cancelled",REJECTED:"rejected",PENDING_DELETE:"pdelete"};
+const R_LABEL = {PASSED:"Cleared",FAILED:"Flagged",ERROR:"Error"};
+
+const ALERT_META = {
+  sem_achados:   {label:"Sem Achados",        icon:"✅", cls:"sem_achados"},
+  novo_achado:   {label:"Novo Achado",         icon:"🆕", cls:"com_achados"},
+  persistente:   {label:"Achado Persistente",  icon:"🔁", cls:"draft"},
+  reincidente:   {label:"Risco Reincidente",   icon:"⚠️", cls:"com_achados"},
+  em_tratamento: {label:"Em Tratamento",       icon:"🔕", cls:"review"},
+  erro:          {label:"Erro",                icon:"❌", cls:"erro"},
+  nunca_rodou:   {label:"—",                   icon:"",   cls:"draft"},
+};
+
+function AlertStatusBadge({status}) {
+  if (!status) return <span style={{color:"var(--text-subtle)"}}>—</span>;
+  const m = ALERT_META[status] || {label:status, icon:"", cls:"draft"};
+  return <span className={`badge badge-${m.cls}`} style={{gap:4}}>{m.icon} {m.label}</span>;
+}
+const R_CLS   = {PASSED:"cleared",FAILED:"flagged",ERROR:"error"};
+const CHG_LBL = {CREATED:"✦ Criado",EDITED:"✎ Editado",SUBMITTED_FOR_REVIEW:"→ Submetido",APPROVED:"✓ Aprovado",REJECTED:"✕ Rejeitado",PAUSED:"⏸ Pausado",REACTIVATED:"▶ Reativado",CANCELLED:"⊗ Cancelamento Aprovado"};
+const fmt = dt => dt ? new Date(dt).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"}) : "—";
+
+const StatusBadge = ({s}) => <span className={`badge badge-${S_CLS[s]||"draft"}`}>{S_LABEL[s]||s}</span>;
+const ResultBadge = ({r}) => r ? <span className={`badge badge-${R_CLS[r]||"draft"}`}>{R_LABEL[r]||r}</span> : <span style={{color:"var(--text-subtle)"}}>—</span>;
+const TypeBadge   = ({t}) => <span className={`badge badge-${(t||"").toLowerCase()}`}>{t}</span>;
+
+// ── Color Palettes (for custom dashboard views) ──────────────────────────────
+const PALETTE_COLORS = {
+  blue:  ["#3b82f6","#6366f1","#8b5cf6","#0ea5e9","#06b6d4","#14b8a6","#22c55e","#84cc16"],
+  warm:  ["#ef4444","#f97316","#f59e0b","#eab308","#e11d48","#ec4899","#d97706","#dc2626"],
+  earth: ["#059669","#0d9488","#0891b2","#10b981","#6ee7b7","#34d399","#1d4ed8","#7c3aed"],
+};
+const PALETTE_META = [
+  {value:"blue",  label:"Azul / Roxo",           colors:["#3b82f6","#6366f1","#8b5cf6","#0ea5e9"]},
+  {value:"warm",  label:"Quente (Verm/Âmbar)",   colors:["#ef4444","#f97316","#f59e0b","#e11d48"]},
+  {value:"earth", label:"Natural (Verde/Teal)",   colors:["#059669","#0d9488","#10b981","#0891b2"]},
+];
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+const Toasts = ({toasts}) => (
+  <div className="toast-wrap">
+    {toasts.map(t=>(
+      <div key={t.id} className={`toast ${t.type}`}>
+        {t.type==="success"?"✅":t.type==="error"?"❌":"⚠️"} {t.msg}
+      </div>
+    ))}
+  </div>
+);
+
+// ── RiskCombobox ─────────────────────────────────────────────────────────────
+function RiskCombobox({value, onChange, risks}) {
+  // risks can be: array | {error, data:[]} | []
+  const risksArr  = Array.isArray(risks) ? risks : (risks?.data || []);
+  const risksErr  = risks?.error || null;
+
+  const [q, setQ]         = useState("");
+  const [open, setOpen]   = useState(false);
+  const [fi, setFi]       = useState(0);
+  const [typing, setTyping] = useState(false);
+  const ref               = useRef();
+
+  // Sync display label when not actively typing
+  useEffect(() => {
+    if (!typing && value) {
+      const found = risksArr.find(r => r.RiskId === value);
+      setQ(found ? `${found.RiskId} — ${found.RiskTitle}` : value);
+    } else if (!typing && !value) {
+      setQ("");
+    }
+  }, [value, risksArr, typing]);
+
+  // Filter: when typing use query, when just opened show all
+  const filtered = risksArr.filter(r => {
+    if (!q || !typing) return true;
+    const s = q.toLowerCase();
+    return r.RiskId?.toLowerCase().includes(s) || r.RiskTitle?.toLowerCase().includes(s);
+  }).slice(0, 60);
+
+  useEffect(() => {
+    const fn = e => {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false);
+        setTyping(false);
+      }
+    };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, []);
+
+  function select(r) {
+    onChange(r.RiskId);
+    setQ(`${r.RiskId} — ${r.RiskTitle}`);
+    setOpen(false);
+    setTyping(false);
+    setFi(0);
+  }
+
+  if (risksErr) {
+    return (
+      <div>
+        <input className="field-input" value={value||""} onChange={e=>onChange(e.target.value)}
+          placeholder="Digite o ID do risco manualmente..."/>
+        <div style={{fontSize:10.5,color:"var(--danger)",marginTop:3}}>
+          ⚠️ Tabela de riscos indisponível — {risksErr.slice(0,80)}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="combobox" ref={ref}>
+      <input
+        className="field-input"
+        placeholder={risksArr.length===0?"Carregando riscos...":"Buscar por ID ou título do risco..."}
+        value={q}
+        onChange={e => {
+          setQ(e.target.value);
+          setTyping(true);
+          onChange(e.target.value);
+          setOpen(true);
+          setFi(0);
+        }}
+        onFocus={() => { setOpen(true); setTyping(false); }}
+        onBlur={() => setTimeout(()=>{ setTyping(false); }, 200)}
+        onKeyDown={e => {
+          if (e.key==="ArrowDown"){e.preventDefault();setFi(f=>Math.min(f+1,filtered.length-1));}
+          if (e.key==="ArrowUp")  {e.preventDefault();setFi(f=>Math.max(f-1,0));}
+          if (e.key==="Enter" && filtered[fi]) { e.preventDefault(); select(filtered[fi]); }
+          if (e.key==="Escape") { setOpen(false); setTyping(false); }
+        }}
+      />
+      {open && risksArr.length > 0 && (
+        <div className="cb-dropdown">
+          {filtered.length===0
+            ? <div className="cb-empty">Nenhum risco encontrado para "{q}"</div>
+            : filtered.map((r,i) => (
+                <div key={r.RiskId} className={`cb-item${i===fi?" focused":""}`} onMouseDown={()=>select(r)}>
+                  <span style={{fontFamily:"var(--mono)",fontSize:10.5,color:"var(--primary)",marginRight:8,flexShrink:0}}>{r.RiskId}</span>
+                  <span style={{overflow:"hidden",textOverflow:"ellipsis"}}>{r.RiskTitle}</span>
+                </div>
+              ))
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── AreaSelect ───────────────────────────────────────────────────────────────
+function AreaSelect({value, onChange, areas}) {
+  // areas can be: array | {error, data:[]} | []
+  const areasArr = Array.isArray(areas) ? areas : (areas?.data || []);
+  const areasErr = areas?.error || null;
+
+  if (areasErr) {
+    return (
+      <div>
+        <input className="field-input" value={value||""} onChange={e=>onChange(e.target.value)}
+          placeholder="Digite a área manualmente..."/>
+        <div style={{fontSize:10.5,color:"var(--danger)",marginTop:3}}>
+          ⚠️ Tabela de áreas indisponível — {areasErr.slice(0,80)}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <select className="field-select" value={value||""} onChange={e=>onChange(e.target.value)}>
+      <option value="">{areasArr.length===0?"Carregando áreas...":"Selecionar área..."}</option>
+      {areasArr.map(a=><option key={a.Area} value={a.Area}>{a.Area}</option>)}
+    </select>
+  );
+}
+
+// ── TestEditor ───────────────────────────────────────────────────────────────
+const EMPTY = {test_name:"",output_table_suffix:"",description:"",responsible_area:"",risco_id:"",threshold:0,frequency:"DAILY",query_type:"SQL",imports:"",query_code:"",category:"",should_activate_channel:true};
+
+function validateForm(form) {
+  const errs = {};
+  if (!form.test_name?.trim())           errs.test_name         = "Obrigatório";
+  if (!form.output_table_suffix?.trim()) errs.output_table      = "Obrigatório";
+  if (!form.responsible_area?.trim())    errs.responsible_area  = "Obrigatório";
+  if (!form.risco_id?.trim() || form.risco_id === "N/A") errs.risco_id = "Obrigatório";
+  if (!form.description?.trim())         errs.description       = "Obrigatório";
+  if (!form.query_code?.trim())          errs.query_code        = "Obrigatório";
+  return errs;
+}
+
+function TestEditor({test, risks, areas, onClose, onSave, saving}) {
+  const isEdit = !!test?.test_id;
+  const initSuffix = isEdit ? (test.output_table||"").replace(/^tb_incidents_/,"") : "";
+  const [form, setForm]       = useState(isEdit ? {...test, output_table_suffix:initSuffix} : {...EMPTY});
+  const [hits, setHits]       = useState([]);
+  const [fieldErrs, setFieldErrs] = useState({});
+  const [submitErr, setSubmitErr] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [tested, setTested]   = useState(false);
+  const [testLoading, setTestLoading] = useState(false);
+
+  const set = (k,v) => {
+    setForm(f=>({...f,[k]:v}));
+    // clear field error when user edits
+    setFieldErrs(e=>({...e,[k]:undefined}));
+    if (["query_type","imports","query_code"].includes(k)) { setTested(false); setPreview(null); }
+  };
+
+  useEffect(()=>setHits(localValidate(form.query_type,form.imports,form.query_code)),[form.query_type,form.imports,form.query_code]);
+
+  async function runPreview() {
+    // Validate query before running
+    if (!form.query_code?.trim()) {
+      setPreview({success:false, error:"Escreva o código antes de validar."});
+      return;
+    }
+    if (hits.length) {
+      setPreview({success:false, error:`Remova os padrões bloqueados antes de testar: ${hits.join(", ")}`});
+      return;
+    }
+    setTestLoading(true);
+    setPreview(null);
+    const r = await api.runPreview({query_type:form.query_type, imports:form.imports, query_code:form.query_code});
+    setPreview(r);
+    setTested(r.success);
+    setTestLoading(false);
+  }
+
+  function handleSubmit(doSubmit) {
+    setSubmitErr("");
+    if (doSubmit) {
+      const errs = validateForm(form);
+      if (Object.keys(errs).length) {
+        setFieldErrs(errs);
+        setSubmitErr("Preencha todos os campos obrigatórios antes de submeter.");
+        return;
+      }
+      if (!tested) {
+        setSubmitErr("Valide a query com sucesso antes de submeter para revisão.");
+        return;
+      }
+      if (hits.length) {
+        setSubmitErr(`Corrija os padrões bloqueados: ${hits.join(", ")}`);
+        return;
+      }
+    }
+    onSave({...form, output_table:`tb_incidents_${form.output_table_suffix}`}, doSubmit);
+  }
+
+  return (
+    <div className="overlay" onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal modal-lg">
+        <div className="modal-head">
+          <div>
+            <div className="modal-title">{isEdit?"Editar Teste":"Novo Teste de Auditoria"}</div>
+            <div className="modal-sub">{isEdit?`v${form.version} · ${form.test_id}`:"Configure o teste e valide a query antes de submeter"}</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-body">
+          <div className="form-grid" style={{marginBottom:13}}>
+            <div className="field">
+              <label className="field-label">Nome do Teste<span className="req">*</span></label>
+              <input
+                className="field-input"
+                value={form.test_name}
+                onChange={e=>set("test_name",e.target.value)}
+                placeholder="ex: download-large-results"
+                disabled={isEdit&&form.status==="ACTIVE"}
+                style={{
+                  ...(isEdit&&form.status==="ACTIVE"?{background:"var(--surface-alt)",color:"var(--text-muted)",cursor:"not-allowed"}:{}),
+                  ...(fieldErrs.test_name?{borderColor:"var(--danger)"}:{})
+                }}/>
+              {isEdit&&form.status==="ACTIVE"&&<span style={{fontSize:10.5,color:"var(--text-subtle)"}}>🔒 Nome não pode ser alterado em testes ativos</span>}
+              {fieldErrs.test_name&&<span style={{fontSize:11,color:"var(--danger)"}}>⚠ {fieldErrs.test_name}</span>}
+            </div>
+            <div className="field">
+              <label className="field-label">Tabela de Achados<span className="req">*</span></label>
+              {isEdit&&form.status==="ACTIVE" ? (
+                <input className="field-input" value={`tb_incidents_${form.output_table_suffix}`} disabled
+                  style={{background:"var(--surface-alt)",color:"var(--text-muted)",cursor:"not-allowed",fontFamily:"var(--mono)",fontSize:12}}/>
+              ) : (
+                <div className="inp-prefix-wrap" style={fieldErrs.output_table?{borderColor:"var(--danger)"}:{}}>
+                  <span className="inp-prefix">tb_incidents_</span>
+                  <input className="inp-prefix-input" value={form.output_table_suffix} onChange={e=>set("output_table_suffix",e.target.value.replace(/[^a-z0-9_]/g,""))} placeholder="categoria_nome"/>
+                </div>
+              )}
+              {isEdit&&form.status==="ACTIVE"&&<span style={{fontSize:10.5,color:"var(--text-subtle)"}}>🔒 Tabela não pode ser alterada em testes ativos</span>}
+              {fieldErrs.output_table&&<span style={{fontSize:11,color:"var(--danger)"}}>⚠ {fieldErrs.output_table}</span>}
+            </div>
+            <div className="field">
+              <label className="field-label">Área Responsável<span className="req">*</span></label>
+              <div style={fieldErrs.responsible_area?{borderRadius:"var(--rs)",outline:"1px solid var(--danger)"}:{}}>
+                <AreaSelect value={form.responsible_area} onChange={v=>set("responsible_area",v)} areas={areas}/>
+              </div>
+              {fieldErrs.responsible_area&&<span style={{fontSize:11,color:"var(--danger)"}}>⚠ {fieldErrs.responsible_area}</span>}
+            </div>
+            <div className="field">
+              <label className="field-label">ID do Risco<span className="req">*</span></label>
+              <div style={fieldErrs.risco_id?{borderRadius:"var(--rs)",outline:"1px solid var(--danger)"}:{}}>
+                <RiskCombobox value={form.risco_id} onChange={v=>set("risco_id",v)} risks={risks}/>
+              </div>
+              {fieldErrs.risco_id&&<span style={{fontSize:11,color:"var(--danger)"}}>⚠ {fieldErrs.risco_id}</span>}
+            </div>
+          </div>
+
+          <div className="form-grid-3" style={{marginBottom:13}}>
+            <div className="field">
+              <label className="field-label">Threshold</label>
+              <input className="field-input" type="number" min={0} value={form.threshold} onChange={e=>set("threshold",parseInt(e.target.value)||0)}/>
+            </div>
+            <div className="field">
+              <label className="field-label">Frequência</label>
+              <select className="field-select" value={form.frequency} onChange={e=>set("frequency",e.target.value)}>
+                <option value="DAILY">Daily — todo dia</option>
+                <option value="WEEKLY">Weekly — toda sexta</option>
+                <option value="MONTHLY">Monthly — dia 5</option>
+              </select>
+            </div>
+            <div className="field">
+              <label className="field-label">Categoria</label>
+              <input className="field-input" value={form.category} onChange={e=>set("category",e.target.value)} placeholder="ex: databricks-config"/>
+            </div>
+          </div>
+
+          <div className="field" style={{marginBottom:13}}>
+            <label className="field-label">Descrição<span className="req">*</span></label>
+            <textarea
+              className="field-textarea" rows={2}
+              value={form.description}
+              onChange={e=>set("description",e.target.value)}
+              placeholder="Descreva o que este teste monitora, que risco verifica e qual o critério de falha..."
+              style={fieldErrs.description?{borderColor:"var(--danger)"}:{}}
+            />
+            {fieldErrs.description&&<span style={{fontSize:11,color:"var(--danger)"}}>⚠ {fieldErrs.description}</span>}
+          </div>
+
+          <div style={{marginBottom:14}}>
+            <label className="toggle-row" style={{cursor:"pointer"}}>
+              <input type="checkbox" checked={form.should_activate_channel} onChange={e=>set("should_activate_channel",e.target.checked)}/>
+              <span style={{fontSize:13,color:form.should_activate_channel?"var(--primary)":"var(--text-muted)"}}>
+                {form.should_activate_channel?"🔔 Notificar Slack quando Flagged":"🔕 Sem notificação"}
+              </span>
+            </label>
+          </div>
+
+          <div className="divider"/>
+
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+            <span className="field-label" style={{margin:0}}>Tipo</span>
+            <div className="type-toggle">
+              <button className={`type-opt${form.query_type==="SQL"?" active":""}`} onClick={()=>set("query_type","SQL")}>SQL</button>
+              <button className={`type-opt${form.query_type==="PYTHON"?" active":""}`} onClick={()=>set("query_type","PYTHON")}>Python</button>
+            </div>
+          </div>
+
+          {form.query_type==="PYTHON" && (
+            <div className="code-section">
+              <div className="code-sec-hd">
+                <span>📦 Imports</span>
+                <span className="code-tag" style={{background:"var(--purple-soft)",color:"var(--purple)"}}>Opcional</span>
+                <span style={{marginLeft:"auto",fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10,color:"var(--text-subtle)"}}>Uma biblioteca por linha</span>
+              </div>
+              <textarea className="code-area imports" rows={3} value={form.imports} onChange={e=>set("imports",e.target.value)} placeholder={"from pyspark.sql.functions import col, count\nimport json"}/>
+            </div>
+          )}
+
+          <div className="code-section">
+            <div className="code-sec-hd">
+              <span>{form.query_type==="SQL"?"🔍 Query SQL":"⚙️ Código Python"}</span>
+              <span className="code-tag" style={{background:"var(--primary-soft)",color:"var(--primary)"}}>Obrigatório</span>
+              {form.query_type==="PYTHON" && (
+                <span style={{marginLeft:"auto",fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10,color:"var(--text-subtle)"}}>
+                  Resultado deve ser atribuído a <code style={{background:"var(--bg)",padding:"0 4px",borderRadius:3}}>df_incidents</code>
+                </span>
+              )}
+            </div>
+            <textarea className="code-area query" rows={10} value={form.query_code} onChange={e=>set("query_code",e.target.value)}
+              placeholder={form.query_type==="SQL"
+                ?"SELECT user_id, event_time, action\nFROM catalog.schema.table\nWHERE condition = true"
+                :"df_incidents = (\n    spark.table('catalog.schema.table')\n    .filter(col('condition') == True)\n    .select('user_id', 'event_time')\n)"}
+            />
+          </div>
+
+          {hits.length>0 && <div className="val-error">⛔ Padrões bloqueados: <strong>{hits.join(", ")}</strong></div>}
+
+          {/* Validation / Run test */}
+          <div style={{border:"1px solid var(--border)",borderRadius:"var(--rs)",overflow:"hidden",marginTop:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"var(--surface-alt)",borderBottom: preview||testLoading?"1px solid var(--border)":"none"}}>
+              <button
+                className={`btn btn-sm ${tested?"btn-success":"btn-primary"}`}
+                onClick={runPreview}
+                disabled={testLoading||!form.query_code?.trim()}
+                style={{minWidth:140}}
+              >
+                {testLoading ? "⏳ Executando..." : tested ? "✓ Query Validada" : "▶ Validar e Testar Query"}
+              </button>
+              {form.query_type==="PYTHON" && (
+                <span style={{fontSize:11,color:"var(--text-muted)"}}>
+                  Python: valida sintaxe e estrutura • execução completa ocorre no orquestrador
+                </span>
+              )}
+              {form.query_type==="SQL" && !testLoading && !tested && (
+                <span style={{fontSize:11,color:"var(--text-subtle)"}}>
+                  Executa a query com LIMIT 10 e mostra o resultado
+                </span>
+              )}
+              {tested && !testLoading && (
+                <button className="btn btn-ghost btn-sm" onClick={()=>{setTested(false);setPreview(null);}}>
+                  ↺ Re-testar
+                </button>
+              )}
+            </div>
+
+            {testLoading && (
+              <div style={{padding:"20px",display:"flex",alignItems:"center",gap:10,color:"var(--text-muted)",fontSize:13}}>
+                <div className="spinner"/> Executando query no warehouse...
+              </div>
+            )}
+
+            {preview && !testLoading && (
+              preview.success ? (
+                <div style={{padding:"14px 16px"}}>
+                  {preview.sample !== undefined ? (
+                    <>
+                      <div style={{fontWeight:600,fontSize:13,color:"var(--success)",marginBottom:10}}>
+                        ✓ {preview.row_count === 0 ? "Query executada — 0 linhas retornadas (sem achados no momento)" : `✓ ${preview.row_count} linha(s) de amostra — df_incidents`}
+                      </div>
+                      {preview.sample?.length>0 && (
+                        <div className="prev-wrap">
+                          <table>
+                            <thead><tr>{preview.columns.map(c=><th key={c}>{c}</th>)}</tr></thead>
+                            <tbody>{preview.sample.map((row,i)=>(
+                              <tr key={i}>{preview.columns.map(c=><td key={c} title={String(row[c]??"")}>{String(row[c]??"")}</td>)}</tr>
+                            ))}</tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{color:"var(--success)",fontSize:13}}>✓ {preview.message}</div>
+                  )}
+                </div>
+              ) : (
+                <div style={{padding:"14px 16px",background:"var(--danger-soft)"}}>
+                  <div style={{fontWeight:600,fontSize:13,color:"var(--danger)",marginBottom:6}}>✗ Erro — corrija antes de submeter</div>
+                  <code style={{fontSize:11,color:"var(--danger)",display:"block",whiteSpace:"pre-wrap",lineHeight:1.7}}>{preview.error}</code>
+                </div>
+              )
+            )}
+          </div>
+
+          {submitErr && <div className="val-error" style={{marginTop:10}}>⚠️ {submitErr}</div>}
+        </div>
+
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button className="btn btn-ghost" onClick={()=>handleSubmit(false)} disabled={saving}>{saving?"Salvando...":"Salvar Rascunho"}</button>
+          <button
+            className="btn btn-primary"
+            onClick={()=>handleSubmit(true)}
+            disabled={saving}
+            title={!tested?"Valide a query antes de submeter":hits.length>0?"Corrija os padrões bloqueados":""}
+          >
+            {saving?"Enviando...":"Submeter para Revisão →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ExecTable ─────────────────────────────────────────────────────────────────
+function AlertBadge({exec: e}) {
+  if (e.IsSupressed)  return <span className="badge badge-review"  style={{fontSize:10}}>🔕 Em Tratamento</span>;
+  if (e.IsRecurrent)  return <span className="badge badge-flagged" style={{fontSize:10}}>⚠️ Risco Reincidente</span>;
+  if (e.IsContinued)  return <span className="badge badge-draft"   style={{fontSize:10}}>🔁 Achado Persistente</span>;
+  if (e.TestResult==="FAILED") return <span className="badge badge-flagged" style={{fontSize:10}}>🆕 Novo Achado</span>;
+  return null;
+}
+
+function ExecTable({execs}) {
+  const [expanded, setExpanded] = useState(null);
+  return (
+    <table>
+      <thead><tr><th>Data</th><th>Resultado</th><th>Alerta</th><th>Achados</th><th>Threshold</th><th>Duração</th><th>Erro</th></tr></thead>
+      <tbody>
+        {execs.map((e,i)=>(
+          <React.Fragment key={i}>
+            <tr>
+              <td className="cell-mono">{fmt(e.ExecutionDate)}</td>
+              <td><ResultBadge r={e.TestResult}/></td>
+              <td><AlertBadge exec={e}/></td>
+              <td><span className="cell-count" style={{color:e.IncidentCount>0?"var(--danger)":"var(--success)"}}>{e.IncidentCount??0}</span></td>
+              <td className="cell-mono">{e.Threshold}</td>
+              <td className="cell-mono">{e.ExecutionTimeSec?.toFixed(1)}s</td>
+              <td>
+                {e.ErrorMessage
+                  ? <button className="btn btn-xs btn-danger" onClick={()=>setExpanded(expanded===i?null:i)}>{expanded===i?"▲ Fechar":"▼ Ver erro"}</button>
+                  : <span style={{color:"var(--text-subtle)"}}>—</span>}
+              </td>
+            </tr>
+            {expanded===i&&e.ErrorMessage&&(
+              <tr><td colSpan={7} style={{padding:"0 14px 12px",background:"var(--danger-soft)"}}>
+                <pre style={{fontFamily:"var(--mono)",fontSize:11,color:"var(--danger)",whiteSpace:"pre-wrap",wordBreak:"break-all",lineHeight:1.7,padding:"10px 0"}}>{e.ErrorMessage}</pre>
+              </td></tr>
+            )}
+          </React.Fragment>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// ── AchadosTab ─────────────────────────────────────────────────────────────
+function AchadosTab({testId, testName}) {
+  const [showModal, setShowModal] = useState(false);
+  const [data, setData]     = useState(null);
+  const [loading, setLoad]  = useState(true);
+  const [error, setError]   = useState(null);
+
+  useEffect(()=>{
+    api.getIncidents(testId)
+      .then(d=>{setData(d);setLoad(false);})
+      .catch(e=>{setError(e.message);setLoad(false);});
+  },[testId]);
+
+  if (loading) return <div className="loading"><div className="spinner"/>Carregando achados...</div>;
+  if (error)   return <div className="val-error">{error}</div>;
+
+  const fp_count  = data?.fp_count || 0;
+  const realCount = (data?.count || 0) - fp_count;
+
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+        <span style={{fontFamily:"var(--mono)",fontSize:11,color:"var(--text-muted)"}}>Última execução</span>
+        {data?.count>0 && realCount>0
+          ? <span className="badge badge-flagged">{realCount} achado(s){fp_count>0 && <span style={{fontWeight:400,opacity:0.75}}> · {fp_count} FP excluído{fp_count>1?"s":""}</span>}</span>
+          : <span className="badge badge-cleared">{data?.count>0 && fp_count>0 ? `${fp_count} FP excluído${fp_count>1?"s":""}` : "Sem achados"}</span>
+        }
+        {data?.count>0 && (
+          <button className="btn btn-primary btn-sm" style={{marginLeft:"auto"}} onClick={()=>setShowModal(true)}>
+            🔍 Analisar Achados
+          </button>
+        )}
+      </div>
+
+      {/* Hash comparison banner */}
+      {data?.count>0 && data?.is_same_as_previous && (
+        <div className="alert alert-warn" style={{marginBottom:10,fontSize:12}}>
+          🔁 <strong>Achado Persistente</strong> — este conjunto de incidências é idêntico à execução anterior. O risco continua materializado sem resolução intermediária.
+          {data?.last_hash_meta?.is_suppressed && " O alerta não foi disparado pois há um apontamento de risco em tratamento vinculado."}
+          {!data?.last_hash_meta?.is_suppressed && " Nenhum novo alerta foi disparado — achado persistente em andamento."}
+        </div>
+      )}
+      {data?.count>0 && data?.is_same_as_previous===false && data?.last_hash_meta && (
+        <div style={{fontSize:11,color:"var(--success)",marginBottom:8}}>✓ Achados diferentes da execução anterior</div>
+      )}
+      {fp_count>0 && (
+        <div className="alert alert-info" style={{marginBottom:10,fontSize:12}}>
+          ⚑ <strong>{fp_count} linha{fp_count>1?"s marcadas":" marcada"} como Falso Positivo</strong> — não contabilizada{fp_count>1?"s":""} no threshold de alerta.
+        </div>
+      )}
+
+      {data?.count>0 ? (
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"var(--text-subtle)"}}>Prévia das primeiras 3 linhas</span>
+            <span style={{fontSize:11,background:"var(--primary-soft)",color:"var(--primary)",padding:"2px 8px",borderRadius:"var(--rs)"}}>
+              💡 Em "Analisar Achados" você pode filtrar por data e marcar linhas como <strong>Falso Positivo</strong>
+            </span>
+          </div>
+          <div style={{overflowX:"auto",border:"1px solid var(--border)",borderRadius:"var(--rs)"}}>
+            <table>
+              <thead><tr>{(data.columns||[]).filter(c=>c!=="ArchiveDate").slice(0,5).map(c=><th key={c}>{c}</th>)}</tr></thead>
+              <tbody>
+                {(data.rows||[]).slice(0,3).map((row,i)=>(
+                  <tr key={i} style={{cursor:"default",opacity:row._is_false_positive?0.45:1,background:row._is_false_positive?"#fffbeb":""}}>
+                    {(data.columns||[]).filter(c=>c!=="ArchiveDate").slice(0,5).map(c=>(
+                      <td key={c} className="cell-mono" style={{maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String(row[c]??"")}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="empty"><div className="empty-icon">✅</div><div className="empty-title">Sem achados na última execução</div></div>
+      )}
+
+      {showModal && (
+        <AchadosModal testId={testId} testName={testName} execDates={data?.exec_dates||[]} onClose={()=>setShowModal(false)}/>
+      )}
+    </div>
+  );
+}
+
+// ── FPMarkModal ────────────────────────────────────────────────────────────────
+function FPMarkModal({onConfirm, onClose}) {
+  const [note, setNote] = useState("");
+  return (
+    <div className="overlay" style={{zIndex:300}} onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal" style={{width:460}}>
+        <div className="modal-head">
+          <div>
+            <div className="modal-title">⚑ Marcar como Falso Positivo</div>
+            <div className="modal-sub">Um comentário é obrigatório para rastreabilidade</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div className="field">
+            <label className="field-label">Comentário <span className="req">*</span></label>
+            <textarea
+              className="field-textarea" rows={3}
+              value={note} onChange={e=>setNote(e.target.value)}
+              placeholder="Explique por que este achado é um falso positivo..."
+              autoFocus
+            />
+          </div>
+          <div style={{fontSize:12,color:"var(--text-subtle)",marginTop:8}}>
+            Esta marcação suprime a linha em todas as execuções futuras com o mesmo hash.
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-warning" onClick={()=>note.trim()&&onConfirm(note.trim())} disabled={!note.trim()}>
+            ⚑ Confirmar FP
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── FPUnmarkConfirm ────────────────────────────────────────────────────────────
+function FPUnmarkConfirm({onConfirm, onClose}) {
+  return (
+    <div className="overlay" style={{zIndex:300}} onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal" style={{width:400}}>
+        <div className="modal-head">
+          <div className="modal-title">Remover marcação de FP?</div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <p style={{fontSize:13,color:"var(--text-muted)"}}>
+            A linha voltará a ser contada como achado real na próxima execução do teste.
+          </p>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-danger" onClick={onConfirm}>Remover FP</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AchadosModal ──────────────────────────────────────────────────────────────
+function AchadosModal({testId, testName, execDates, onClose}) {
+  const [dateFrom, setDateFrom] = useState(execDates[0]||"");
+  const [dateTo,   setDateTo]   = useState("");
+  const [search,   setSearch]   = useState("");
+  const [data,     setData]     = useState(null);
+  const [loading,  setLoad]     = useState(false);
+  const [expanded, setEx]       = useState(null);
+  const [allDates, setAllDates] = useState(execDates);
+  const [fpActing,    setFpActing]    = useState(null);
+  const [fpMarkRow,   setFpMarkRow]   = useState(null);
+  const [fpUnmarkRow, setFpUnmarkRow] = useState(null);
+
+  function loadData(from, to) {
+    setLoad(true); setEx(null);
+    api.getIncidents(testId, {date_from:from||"", date_to:to||""})
+      .then(d=>{ setData(d); setAllDates(d.exec_dates||allDates); setLoad(false); })
+      .catch(e=>{ setData({error:e.message}); setLoad(false); });
+  }
+
+  useEffect(()=>{ loadData(dateFrom, dateTo); }, []);
+
+  async function doMarkFP(row, note) {
+    setFpMarkRow(null);
+    setFpActing(row._row_hash);
+    // Strip internal fields — only send business data as row_data
+    const row_data = Object.fromEntries(
+      Object.entries(row).filter(([k]) => !k.startsWith("_") && k !== "ArchiveDate")
+    );
+    try { await api.markFP({test_name: testName, row_hash: row._row_hash, note, row_data}); } catch(e) {}
+    setFpActing(null);
+    loadData(dateFrom, dateTo);
+  }
+
+  async function doUnmarkFP(row) {
+    setFpUnmarkRow(null);
+    setFpActing(row._row_hash);
+    try {
+      const fps = await api.listFPs(testId).catch(()=>[]);
+      const fp  = Array.isArray(fps) && fps.find(f => f.row_hash === row._row_hash && f.active);
+      if (fp) await api.unmarkFP(fp.fp_id);
+    } catch(e) {}
+    setFpActing(null);
+    loadData(dateFrom, dateTo);
+  }
+
+  const displayCols = (data?.columns||[]).filter(c=>c!=="ArchiveDate");
+  const fp_count    = data?.fp_count || 0;
+
+  const filtered = (data?.rows||[]).filter(row => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return displayCols.some(c => String(row[c]??"").toLowerCase().includes(q));
+  });
+
+  return (
+    <>
+    <div className="overlay" onMouseDown={e=>e.target===e.currentTarget&&onClose()} style={{zIndex:200}}>
+      <div className="modal modal-xl" style={{maxHeight:"95vh"}}>
+        <div className="modal-head">
+          <div style={{flex:1}}>
+            <div className="modal-title">🔍 Achados — {testName}</div>
+            <div className="modal-sub">
+              {data?.count!=null && `${filtered.length} de ${data.count} registro(s)`}
+              {data?.count>500 && " · mostrando primeiros 500"}
+              {fp_count>0 && ` · ${fp_count} FP excluído${fp_count>1?"s":""}`}
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+
+        {/* Filters bar */}
+        <div style={{display:"flex",gap:12,padding:"12px 22px",borderBottom:"1px solid var(--border)",background:"var(--surface-alt)",flexWrap:"wrap",alignItems:"flex-end"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <span style={{fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>Execução</span>
+            <select className="field-select" style={{minWidth:160}} value={dateFrom} onChange={e=>{setDateFrom(e.target.value);}}>
+              <option value="">Todas as datas</option>
+              {allDates.map(d=><option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <span style={{fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>De</span>
+            <input type="date" className="field-input" style={{width:140}} value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <span style={{fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>Até</span>
+            <input type="date" className="field-input" style={{width:140}} value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={()=>loadData(dateFrom,dateTo)} disabled={loading}>
+            {loading?"⏳":"⟳"} Buscar
+          </button>
+          <div style={{marginLeft:"auto"}}>
+            <input className="inp-search" placeholder="🔍 Buscar em todos os campos..." style={{width:240}} value={search} onChange={e=>{setSearch(e.target.value);setEx(null);}}/>
+          </div>
+          {search && (
+            <button className="btn btn-ghost btn-sm" onClick={()=>setSearch("")}>✕ Limpar busca</button>
+          )}
+        </div>
+
+        <div className="modal-body" style={{padding:0}}>
+          {/* Hash comparison banner */}
+          {!loading && data?.is_same_as_previous && (
+            <div className="alert alert-warn" style={{margin:"12px 22px 0",fontSize:12}}>
+              🔄 <strong>Achado Persistente — mesmas incidências da execução anterior.</strong>
+              {data?.last_hash_meta?.is_suppressed ? " Alerta silenciado — apontamento de risco em tratamento vinculado ao teste." : " Nenhum novo alerta disparado — risco persistente em monitoramento."}
+            </div>
+          )}
+          {!loading && fp_count>0 && (
+            <div className="alert alert-info" style={{margin:"12px 22px 0",fontSize:12}}>
+              ⚑ <strong>{fp_count} linha{fp_count>1?"s marcadas":" marcada"} como Falso Positivo</strong> — excluída{fp_count>1?"s":""} da contagem de achados e do threshold de alerta. Linhas marcadas aparecem com opacidade reduzida.
+            </div>
+          )}
+          {loading ? (
+            <div className="loading"><div className="spinner"/>Carregando achados...</div>
+          ) : data?.error ? (
+            <div style={{padding:24}}><div className="val-error">{data.error}</div></div>
+          ) : filtered.length===0 ? (
+            <div className="empty"><div className="empty-icon">🔎</div><div className="empty-title">{search?"Nenhum resultado para a busca":"Sem achados no período"}</div></div>
+          ) : (
+            <div style={{overflowX:"auto",overflowY:"auto",maxHeight:"calc(95vh - 220px)"}}>
+              <table style={{minWidth:"max-content"}}>
+                <thead style={{position:"sticky",top:0,zIndex:10,background:"var(--surface-alt)"}}>
+                  <tr>
+                    <th style={{width:32}}/>
+                    <th style={{whiteSpace:"nowrap",minWidth:90,background:"var(--surface-alt)"}}>FP</th>
+                    <th style={{whiteSpace:"nowrap",minWidth:130,background:"var(--surface-alt)"}}>Data Execução</th>
+                    {displayCols.map(c=>(
+                      <th key={c} style={{whiteSpace:"nowrap",minWidth:120,background:"var(--surface-alt)"}}>{c}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((row,i)=>(
+                    <React.Fragment key={i}>
+                      <tr className={`achados-row${expanded===i?" expanded":""}`}
+                          style={row._is_false_positive ? {opacity:0.5,background:"#fffbeb"} : {}}
+                          onClick={()=>setEx(expanded===i?null:i)}>
+                        <td style={{padding:"6px",textAlign:"center",color:"var(--text-subtle)",fontSize:11,cursor:"pointer"}}>{expanded===i?"▾":"▸"}</td>
+                        <td onClick={e=>e.stopPropagation()} style={{textAlign:"center",padding:"4px 8px",whiteSpace:"nowrap"}}>
+                          {row._is_false_positive ? (
+                            <button
+                              className="btn btn-xs btn-warning"
+                              disabled={fpActing===row._row_hash}
+                              onClick={()=>setFpUnmarkRow(row)}
+                              title={`FP: ${row._fp_note||""} · Por ${row._fp_marked_by||"?"}`}
+                            >
+                              {fpActing===row._row_hash?"⏳":"FP ✓"}
+                            </button>
+                          ) : (
+                            <button
+                              className="btn btn-xs btn-ghost"
+                              style={{opacity:0.55}}
+                              disabled={fpActing===row._row_hash}
+                              onClick={()=>setFpMarkRow(row)}
+                              title="Marcar como falso positivo"
+                            >
+                              {fpActing===row._row_hash?"⏳":"FP"}
+                            </button>
+                          )}
+                        </td>
+                        <td className="cell-mono" style={{whiteSpace:"nowrap"}}>{row.ArchiveDate ? fmt(row.ArchiveDate) : "—"}</td>
+                        {displayCols.map(c=>{
+                          const v = String(row[c]??"");
+                          const isMatch = search && v.toLowerCase().includes(search.toLowerCase());
+                          return (
+                            <td key={c} style={{whiteSpace:"nowrap",maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",fontFamily:"var(--mono)",fontSize:12}} title={v}>
+                              {isMatch ? (
+                                <span style={{background:"#fef9c3",borderRadius:2,padding:"0 2px"}}>{v}</span>
+                              ) : v}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                      {expanded===i&&(
+                        <tr>
+                          <td colSpan={displayCols.length+3} className="achados-expand">
+                            {row._is_false_positive && (
+                              <div style={{background:"#fffbeb",border:"1px solid #f59e0b",borderRadius:6,padding:"8px 12px",marginBottom:10,fontSize:12}}>
+                                <strong>⚑ Falso Positivo</strong>
+                                {row._fp_note && <> — {row._fp_note}</>}
+                                <span style={{color:"var(--text-muted)",marginLeft:8}}>
+                                  Por {row._fp_marked_by||"?"}{row._fp_marked_at ? ` em ${fmt(row._fp_marked_at)}` : ""}
+                                </span>
+                              </div>
+                            )}
+                            <div className="achados-inner" style={{gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))"}}>
+                              {row.ArchiveDate && (
+                                <div className="achado-field">
+                                  <span className="achado-lbl">Data de Execução</span>
+                                  <span className="achado-val">{fmt(row.ArchiveDate)}</span>
+                                </div>
+                              )}
+                              {displayCols.map(c=>(
+                                <div key={c} className="achado-field">
+                                  <span className="achado-lbl">{c}</span>
+                                  <span className="achado-val" style={{wordBreak:"break-word",lineHeight:1.5}}>{String(row[c]??"—")}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+    {fpMarkRow && <FPMarkModal onConfirm={note=>doMarkFP(fpMarkRow,note)} onClose={()=>setFpMarkRow(null)}/>}
+    {fpUnmarkRow && <FPUnmarkConfirm onConfirm={()=>doUnmarkFP(fpUnmarkRow)} onClose={()=>setFpUnmarkRow(null)}/>}
+    </>
+  );
+}
+
+// ── SuppressionTab ───────────────────────────────────────────────────────────
+function SuppressionTab({testId, testName}) {
+  const [suppressions, setSuppressions] = useState(null);
+  const [showAdd, setShowAdd]           = useState(false);
+  const [entryQ, setEntryQ]             = useState("");
+  const [entries, setEntries]           = useState([]);
+  const [selected, setSelected]         = useState(null);
+  const [note, setNote]                 = useState("");
+  const [saving, setSaving]             = useState(false);
+  const [acting, setActing]             = useState(null);
+  const entryRef = useRef();
+
+  function load() {
+    api.listSuppressions(testId)
+      .then(r => setSuppressions(Array.isArray(r) ? r : r?.data || []))
+      .catch(() => setSuppressions([]));
+  }
+
+  useEffect(load, [testId]);
+
+  useEffect(() => {
+    if (!entryQ.trim()) { setEntries([]); return; }
+    const t = setTimeout(() => {
+      api.searchEntries(entryQ, true)
+        .then(r => setEntries(Array.isArray(r) ? r : r?.data || []))
+        .catch(() => setEntries([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [entryQ]);
+
+  async function addSuppression() {
+    if (!selected) return;
+    setSaving(true);
+    await api.createSuppression(testId, {
+      linked_entry_id:    selected.RiskEntryId,
+      linked_entry_title: selected.RiskEntryTitle,
+      note,
+    });
+    setSaving(false);
+    setShowAdd(false); setEntryQ(""); setSelected(null); setNote("");
+    load();
+  }
+
+  async function deactivate(sid) {
+    setActing(sid);
+    await api.deleteSuppress(sid);
+    setActing(null);
+    load();
+  }
+
+  if (suppressions === null)
+    return <div className="loading"><div className="spinner"/>Carregando supressões...</div>;
+
+  const active   = suppressions.filter(s => s.active && s.entry_is_open);
+  const inactive = suppressions.filter(s => !s.active || !s.entry_is_open);
+
+  return (
+    <div>
+      {/* Info box */}
+      <div className="alert alert-info" style={{marginBottom:14}}>
+        <strong>Apontamento em Tratamento</strong> — enquanto um apontamento de risco aberto estiver vinculado, o teste continua rodando e gravando achados mas não dispara notificação (aparece como "Em Tratamento" no histórico).
+        O teste continua rodando e gravando achados — apenas não dispara notificação.
+        Quando o apontamento fechar, o teste volta a alertar automaticamente.
+      </div>
+
+      {/* Active suppressions */}
+      {active.length > 0 && (
+        <div style={{marginBottom:16}}>
+          <div className="sec-title">Apontamentos em Tratamento Ativos</div>
+          {active.map(s => (
+            <div key={s.suppression_id} style={{
+              border:"1px solid var(--warning-b)", borderRadius:"var(--rs)",
+              padding:"12px 14px", marginBottom:10, background:"var(--warning-soft)"
+            }}>
+              <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:13}}>
+                    🔕 {s.linked_entry_id}
+                    {s.entry_criticality && <span className="badge badge-review" style={{marginLeft:8,fontSize:10}}>{s.entry_criticality}</span>}
+                  </div>
+                  <div style={{fontSize:12.5,color:"var(--text-muted)",marginTop:2}}>{s.entry_title||s.linked_entry_title}</div>
+                  {s.note && <div style={{fontSize:12,color:"var(--text-subtle)",marginTop:4,fontStyle:"italic"}}>"{s.note}"</div>}
+                  <div style={{fontSize:11,color:"var(--text-subtle)",marginTop:4}}>Criado por {s.created_by} · {fmt(s.created_at)}</div>
+                </div>
+                <button className="btn btn-ghost btn-sm" disabled={acting===s.suppression_id} onClick={()=>deactivate(s.suppression_id)}>
+                  {acting===s.suppression_id?"...":"Desativar"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add suppression */}
+      {!showAdd ? (
+        <button className="btn btn-warning btn-sm" onClick={()=>setShowAdd(true)}>
+          + Vincular Apontamento em Tratamento
+        </button>
+      ) : (
+        <div style={{border:"1px solid var(--border)",borderRadius:"var(--rs)",padding:"16px",background:"var(--surface-alt)"}}>
+          <div className="sec-title">Vincular Apontamento de Risco em Tratamento</div>
+
+          <div className="field" style={{marginBottom:12}} ref={entryRef}>
+            <label className="field-label">Buscar Apontamento Aberto (GRCAP-...)<span className="req">*</span></label>
+            <div style={{position:"relative"}}>
+              <input
+                className="field-input"
+                placeholder="Buscar por ID (GRCAP-...) ou título..."
+                value={entryQ}
+                onChange={e=>{setEntryQ(e.target.value);setSelected(null);}}
+              />
+              {entries.length>0 && !selected && (
+                <div className="cb-dropdown">
+                  {entries.map(e=>(
+                    <div key={e.RiskEntryId} className="cb-item" onMouseDown={()=>{setSelected(e);setEntryQ(`${e.RiskEntryId} — ${e.RiskEntryTitle}`);}}>
+                      <span style={{fontFamily:"var(--mono)",fontSize:10.5,color:"var(--primary)",marginRight:8}}>{e.RiskEntryId}</span>
+                      <span>{e.RiskEntryTitle}</span>
+                      {e.Criticality&&<span style={{marginLeft:"auto",fontSize:10.5,color:"var(--text-subtle)"}}>{e.Criticality}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {selected && (
+              <div style={{marginTop:6,padding:"8px 12px",background:"var(--primary-soft)",borderRadius:"var(--rs)",fontSize:12}}>
+                ✓ <strong>{selected.RiskEntryId}</strong> — {selected.RiskEntryTitle}
+                {selected.ImplementationDeadline&&<span style={{marginLeft:8,color:"var(--text-muted)"}}>Prazo: {selected.ImplementationDeadline}</span>}
+              </div>
+            )}
+          </div>
+
+          <div className="field" style={{marginBottom:14}}>
+            <label className="field-label">Observação</label>
+            <textarea className="field-textarea" rows={2} value={note} onChange={e=>setNote(e.target.value)} placeholder="Contexto ou justificativa..."/>
+          </div>
+
+          <div style={{display:"flex",gap:8}}>
+            <button className="btn btn-warning" onClick={addSuppression} disabled={!selected||saving}>
+              {saving?"Salvando...":"Salvar Supressão"}
+            </button>
+            <button className="btn btn-ghost" onClick={()=>{setShowAdd(false);setEntryQ("");setSelected(null);setNote("");}}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Inactive history */}
+      {inactive.length > 0 && (
+        <div style={{marginTop:20}}>
+          <div className="sec-title">Histórico (apontamentos fechados ou desativados)</div>
+          {inactive.map(s => (
+            <div key={s.suppression_id} style={{
+              border:"1px solid var(--border)", borderRadius:"var(--rs)",
+              padding:"10px 14px", marginBottom:8, opacity:.6
+            }}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontWeight:500,fontSize:13}}>{s.linked_entry_id}</span>
+                {!s.entry_is_open
+                  ? <span className="badge badge-cleared" style={{fontSize:10}}>✓ Apontamento Fechado</span>
+                  : <span className="badge badge-cancelled" style={{fontSize:10}}>Desativado Manualmente</span>
+                }
+              </div>
+              <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>{s.entry_title||s.linked_entry_title}</div>
+              {!s.entry_is_open && s.entry_closing_date && (
+                <div style={{fontSize:11,color:"var(--success)",marginTop:3}}>
+                  ✓ Fechado em {s.entry_closing_date} — teste voltou a alertar normalmente
+                </div>
+              )}
+              {s.entry_is_open && (
+                <div style={{fontSize:11,color:"var(--text-subtle)",marginTop:3}}>
+                  Desativado manualmente — apontamento ainda está aberto
+                </div>
+              )}
+              <div style={{fontSize:11,color:"var(--text-subtle)",marginTop:2}}>
+                Criado por {s.created_by} · {fmt(s.created_at)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── TestDetail ────────────────────────────────────────────────────────────────
+function TestDetail({test, user, onClose, onEdit, onPause, onActivate, onRequestDelete}) {
+  const [tab, setTab]       = useState("info");
+  const [history, setHist]  = useState(null);  // null = not loaded
+  const [execs, setExecs]   = useState(null);
+  const [acting, setActing] = useState(false);
+
+  useEffect(()=>{ if(tab==="history"&&history===null)    api.getHistory(test.test_id).then(setHist).catch(()=>setHist([])); },[tab]);
+  useEffect(()=>{ if(tab==="executions"&&execs===null)   api.getExecutions(test.test_id).then(setExecs).catch(()=>setExecs([])); },[tab]);
+
+  const canEdit   = ["DRAFT","REJECTED","ACTIVE"].includes(test.status);
+  const isActiveLocked = test.status === "ACTIVE";
+  const canDelete = ["ACTIVE","PAUSED","REJECTED","DRAFT"].includes(test.status);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  return (
+    <>
+    <div className="overlay" onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal modal-xl">
+        <div className="modal-head">
+          <div style={{flex:1}}>
+            <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:5,flexWrap:"wrap"}}>
+              <div className="modal-title">{test.test_name}</div>
+              <StatusBadge s={acting ? "LOADING" : test.status}/><TypeBadge t={test.query_type}/>
+            </div>
+            <div className="modal-sub">v{test.version} · {test.category||"sem categoria"} · criado por {test.created_by}</div>
+          </div>
+          <div style={{display:"flex",gap:7,flexShrink:0}}>
+            {test.status==="ACTIVE" && (
+              <button className="btn btn-warning btn-sm" disabled={acting} onClick={async()=>{
+                setActing(true);
+                await onPause(test);
+                setActing(false);
+                onClose();
+              }}>
+                {acting ? <><div className="spinner" style={{width:12,height:12,borderWidth:1.5}}/> Pausando...</> : "⏸ Pausar"}
+              </button>
+            )}
+            {test.status==="PAUSED" && (
+              <button className="btn btn-success btn-sm" disabled={acting} onClick={async()=>{
+                setActing(true);
+                await onActivate(test);
+                setActing(false);
+                onClose();
+              }}>
+                {acting ? <><div className="spinner" style={{width:12,height:12,borderWidth:1.5}}/> Reativando...</> : "▶ Reativar"}
+              </button>
+            )}
+            {canEdit                 && <button className="btn btn-ghost btn-sm"   onClick={()=>{onClose();onEdit(test);}}>✎ {test.status==="ACTIVE"?"Editar":"Editar"}</button>}
+            {canDelete               && <button className="btn btn-danger btn-sm"  onClick={()=>setConfirmDelete(true)}>🗑 Excluir</button>}
+            <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+          </div>
+        </div>
+        <div className="tabs">
+          {[["info","Informações"],["query","Query"],["executions","Execuções"],["achados","Achados"],["suppressions","Em Tratamento"],["history","Histórico"]].map(([id,lbl])=>(
+            <button key={id} className={`tab${tab===id?" active":""}`} onClick={()=>setTab(id)}>{lbl}</button>
+          ))}
+        </div>
+        <div className="modal-body">
+          {tab==="info"&&(
+            <>
+              <div className="sec-title">Configuração</div>
+              <div className="kv-grid" style={{marginBottom:18}}>
+                <div className="kv-item"><span className="kv-lbl">Área Responsável</span><span className="kv-val">{test.responsible_area||"—"}</span></div>
+                <div className="kv-item"><span className="kv-lbl">ID do Risco</span><span className="kv-val">{test.risco_id||"—"}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Threshold</span><span className="kv-val">{test.threshold}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Frequência</span><span className="kv-val">{test.frequency}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Notificação</span><span className="kv-val">{test.should_activate_channel?"🔔 Ativa":"🔕 Inativa"}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Ativado em</span><span className="kv-val">{fmt(test.activated_at)}</span></div>
+                <div className="kv-item" style={{gridColumn:"span 3"}}><span className="kv-lbl">Tabela de Achados</span><span className="kv-val" style={{fontFamily:"var(--mono)",fontSize:11}}>sandbox.grc.{test.output_table}</span></div>
+              </div>
+              {test.description&&<><div className="sec-title">Descrição</div><p style={{fontSize:13,color:"var(--text-muted)",lineHeight:1.65,marginBottom:18}}>{test.description}</p></>}
+              {test.rejection_reason&&<><div className="divider"/><div className="sec-title" style={{color:"var(--danger)"}}>Motivo da Rejeição</div><p style={{color:"var(--danger)",fontSize:13}}>{test.rejection_reason}</p></>}
+            </>
+          )}
+          {tab==="query"&&(
+            <>
+              {test.query_type==="PYTHON"&&test.imports&&<><div className="sec-title">Imports</div><div className="code-preview imports" style={{marginBottom:14}}>{test.imports}</div></>}
+              <div className="sec-title">{test.query_type==="SQL"?"Query SQL":"Código Python"}</div>
+              <div className="code-preview query" style={{minHeight:200}}>{test.query_code||"— sem código —"}</div>
+            </>
+          )}
+          {tab==="executions"&&(
+            execs===null
+              ? <div className="loading"><div className="spinner"/>Carregando execuções...</div>
+              : execs.length===0
+                ? <div className="empty"><div className="empty-title">Sem execuções registradas</div></div>
+                : <ExecTable execs={execs}/>
+          )}
+          {tab==="achados"&&<AchadosTab testId={test.test_id} testName={test.test_name}/>}
+          {tab==="suppressions"&&<SuppressionTab testId={test.test_id} testName={test.test_name}/>}
+          {tab==="history"&&(
+            history===null
+              ? <div className="loading"><div className="spinner"/>Carregando histórico...</div>
+              : history.length===0
+                ? <div className="empty"><div className="empty-title">Sem histórico</div></div>
+                : <div className="timeline">
+                    {history.map((h,i)=>{
+                      const neg=["REJECTED","CANCELLED"].includes(h.change_type);
+                      const warn=["PAUSED"].includes(h.change_type);
+                      return (
+                        <div className="tl-item" key={i}>
+                          <div className={`tl-dot${neg?" neg":warn?" warn":""}`}/>
+                          <div className="tl-row">
+                            <span className={`tl-type${neg?" neg":warn?" warn":""}`}>{CHG_LBL[h.change_type]||h.change_type}</span>
+                            <span className="tl-date">{fmt(h.changed_at)}</span>
+                          </div>
+                          <div className="tl-by">por {h.changed_by}</div>
+                          {h.comment&&<div className="tl-comment">"{h.comment}"</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+          )}
+        </div>
+      </div>
+    </div>
+    {confirmDelete&&<ConfirmDeleteDialog test={test} onConfirm={reason=>{setConfirmDelete(false);onRequestDelete(test,reason);}} onCancel={()=>setConfirmDelete(false)}/>}
+    </>
+  );
+}
+
+// ── ConfirmDeleteDialog ──────────────────────────────────────────────────────
+function ConfirmDeleteDialog({test, onConfirm, onCancel}) {
+  const [reason, setReason] = useState("");
+  const needsApproval = ["ACTIVE","PAUSED"].includes(test.status);
+
+  return (
+    <div className="overlay" style={{zIndex:300}} onMouseDown={e=>e.target===e.currentTarget&&onCancel()}>
+      <div className="modal" style={{width:480}}>
+        <div className="modal-head">
+          <div>
+            <div className="modal-title" style={{color:"var(--danger)"}}>
+              {needsApproval?"🗑 Solicitar Exclusão":"🗑 Cancelar Teste"}
+            </div>
+            <div className="modal-sub">{test.test_name}</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onCancel}>✕</button>
+        </div>
+        <div className="modal-body">
+          {needsApproval ? (
+            <div className="alert alert-warn" style={{marginBottom:16}}>
+              ⚠️ Este teste está <strong>{test.status === "ACTIVE" ? "ativo" : "pausado"}</strong>. A exclusão precisará de aprovação de outro revisor antes de ser efetivada.
+            </div>
+          ) : (
+            <div className="alert alert-warn" style={{marginBottom:16}}>
+              Esta ação cancelará o teste imediatamente. O histórico e os achados registrados serão preservados.
+            </div>
+          )}
+          <div className="field">
+            <label className="field-label">Justificativa<span className="req">*</span></label>
+            <textarea
+              className="field-textarea" rows={3}
+              value={reason}
+              onChange={e=>setReason(e.target.value)}
+              placeholder="Descreva o motivo da exclusão..."
+              autoFocus
+            />
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
+          <button
+            className="btn btn-danger"
+            onClick={()=>reason.trim()&&onConfirm(reason)}
+            disabled={!reason.trim()}
+          >
+            {needsApproval?"Solicitar Exclusão":"Confirmar Cancelamento"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── RunPreviewInline ──────────────────────────────────────────────────────────
+function RunPreviewInline({test}) {
+  const [preview,  setPreview]  = useState(null);
+  const [loading,  setLoading]  = useState(false);
+  const [open,     setOpen]     = useState(false);
+
+  async function run() {
+    setOpen(true);
+    setLoading(true);
+    const r = await api.runPreview({
+      query_type: test.query_type,
+      imports:    test.imports,
+      query_code: test.query_code,
+    });
+    setPreview(r);
+    setLoading(false);
+  }
+
+  return (
+    <div style={{border:"1px solid var(--border)",borderRadius:"var(--rs)",overflow:"hidden",marginBottom:12}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"var(--surface-alt)"}}>
+        <button className="btn btn-ghost btn-sm" onClick={open?()=>setOpen(false):run}>
+          {loading?"⏳ Executando...":open?"▲ Fechar resultado":"▶ Testar Query"}
+        </button>
+        {preview?.success===true  && !loading && <span style={{color:"var(--success)",fontSize:12,fontWeight:500}}>✓ Query OK</span>}
+        {preview?.success===false && !loading && <span style={{color:"var(--danger)",fontSize:12,fontWeight:500}}>✗ Erro encontrado</span>}
+        {test.query_type==="PYTHON" && <span style={{fontSize:11,color:"var(--text-subtle)"}}>Python — validação de sintaxe</span>}
+      </div>
+      {open && (
+        loading ? (
+          <div style={{padding:"14px",display:"flex",gap:8,color:"var(--text-muted)",fontSize:13}}><div className="spinner"/>Executando no warehouse...</div>
+        ) : preview?.success ? (
+          <div style={{padding:"12px 14px"}}>
+            {preview.sample !== undefined ? (
+              <>
+                <div style={{fontWeight:600,fontSize:12,color:"var(--success)",marginBottom:8}}>
+                  ✓ {preview.row_count===0?"0 linhas — sem achados no momento":`${preview.row_count} linha(s) — df_incidents`}
+                </div>
+                {preview.sample?.length>0 && (
+                  <div className="prev-wrap">
+                    <table>
+                      <thead><tr>{preview.columns.map(c=><th key={c}>{c}</th>)}</tr></thead>
+                      <tbody>{preview.sample.map((row,i)=>(
+                        <tr key={i}>{preview.columns.map(c=><td key={c}>{String(row[c]??"")}</td>)}</tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            ) : <div style={{fontSize:12,color:"var(--success)"}}>{preview.message}</div>}
+          </div>
+        ) : (
+          <div style={{padding:"12px 14px",background:"var(--danger-soft)"}}>
+            <div style={{fontWeight:600,fontSize:12,color:"var(--danger)",marginBottom:6}}>✗ Erro na query</div>
+            <code style={{fontSize:11,color:"var(--danger)",whiteSpace:"pre-wrap",lineHeight:1.7}}>{preview?.error}</code>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+// ── FalsePositivesPage ────────────────────────────────────────────────────────
+function parseRowData(rowDataStr) {
+  if (!rowDataStr) return [];
+  try {
+    const obj = JSON.parse(rowDataStr);
+    return Object.entries(obj).filter(([,v]) => v != null && v !== "");
+  } catch(e) { return []; }
+}
+
+function RowExpandPanel({rowDataStr, colSpan}) {
+  const entries = parseRowData(rowDataStr);
+  if (!entries.length) return (
+    <tr><td colSpan={colSpan} style={{padding:"10px 20px",fontSize:12,color:"var(--text-subtle)",
+        background:"#fafbff",borderBottom:"1px solid var(--border)"}}>
+      Dados do achado não disponíveis (FP marcado antes do histórico ser habilitado).
+    </td></tr>
+  );
+  return (
+    <tr>
+      <td colSpan={colSpan} style={{padding:0,borderBottom:"1px solid var(--border)"}}>
+        <div style={{padding:"12px 20px",background:"#fafbff",
+                     display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:"10px 16px"}}>
+          {entries.map(([k,v]) => (
+            <div key={k} style={{display:"flex",flexDirection:"column",gap:2}}>
+              <span style={{fontFamily:"var(--mono)",fontSize:9.5,textTransform:"uppercase",
+                            letterSpacing:".4px",color:"var(--text-subtle)"}}>{k}</span>
+              <span style={{fontSize:12.5,color:"var(--text)",wordBreak:"break-word",lineHeight:1.5}}>
+                {String(v)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function FalsePositivesPage({onOpenTest}) {
+  const [tab,       setTab]      = useState("active");
+  const [data,      setData]     = useState(null);
+  const [hist,      setHist]     = useState(null);
+  const [loading,   setLoad]     = useState(true);
+  const [histLoad,  setHLoad]    = useState(false);
+  const [error,     setError]    = useState(null);
+  const [removing,  setRem]      = useState(null);
+  const [acting,    setAct]      = useState(null);
+  const [expanded,  setExpanded] = useState(null);   // fp_id of expanded active row
+  const [hExpanded, setHExp]     = useState(null);   // index of expanded history row
+
+  function loadActive() {
+    setLoad(true);
+    api.getAllFPs()
+      .then(d => { setData(d); setLoad(false); })
+      .catch(e => { setError(e.message); setLoad(false); });
+  }
+  function loadHistory() {
+    setHLoad(true);
+    api.getFPHistory()
+      .then(rows => { setHist(Array.isArray(rows) ? rows : []); setHLoad(false); })
+      .catch(() => { setHist([]); setHLoad(false); });
+  }
+
+  useEffect(() => { loadActive(); }, []);
+  useEffect(() => { if (tab === "history" && hist === null) loadHistory(); }, [tab]);
+
+  async function doRemove(fp_id) {
+    setRem(null);
+    setAct(fp_id);
+    try { await api.unmarkFP(fp_id); } catch(e) {}
+    setAct(null);
+    setExpanded(null);
+    loadActive();
+    loadHistory();  // always refresh history so "Removido" event appears
+  }
+
+  const items = data?.items || [];
+
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+        <div>
+          <div style={{fontWeight:600,fontSize:15}}>Falsos Positivos</div>
+          <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>
+            Linhas excluídas da contagem de achados e do threshold de alerta.
+          </div>
+        </div>
+        <button className="btn btn-ghost btn-sm" style={{marginLeft:"auto"}}
+                onClick={()=>{ loadActive(); if(tab==="history") loadHistory(); }}
+                disabled={loading||histLoad}>
+          {loading||histLoad?"⏳":"⟳"} Atualizar
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex",gap:0,borderBottom:"1px solid var(--border)",marginBottom:18}}>
+        {[
+          {id:"active",  label:`Ativos${data?.count!=null?" ("+data.count+")":""}`},
+          {id:"history", label:"Histórico"},
+        ].map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{padding:"8px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,
+              borderBottom: tab===t.id?"2px solid var(--primary)":"2px solid transparent",
+              color: tab===t.id?"var(--primary)":"var(--text-muted)",fontWeight:tab===t.id?600:400}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Tab: Ativos ── */}
+      {tab==="active" && (
+        loading ? <div className="loading"><div className="spinner"/>Carregando...</div>
+        : error  ? <div className="val-error">{error}</div>
+        : items.length===0 ? (
+          <div className="empty">
+            <div className="empty-icon">✅</div>
+            <div className="empty-title">Nenhum falso positivo ativo</div>
+            <div className="empty-sub">Marque linhas como FP em "Analisar Achados" para que apareçam aqui.</div>
+          </div>
+        ) : (
+          <div style={{overflowX:"auto",border:"1px solid var(--border)",borderRadius:"var(--rs)"}}>
+            <table>
+              <thead>
+                <tr>
+                  <th style={{width:28}}/>
+                  <th style={{minWidth:160}}>Teste</th>
+                  <th style={{minWidth:200}}>Comentário</th>
+                  <th style={{minWidth:140}}>Marcado por</th>
+                  <th style={{minWidth:120}}>Data</th>
+                  <th style={{width:100}}/>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map(fp => (
+                  <React.Fragment key={fp.fp_id}>
+                    <tr style={{opacity: acting===fp.fp_id ? 0.4 : 1, cursor:"pointer"}}
+                        onClick={()=>setExpanded(expanded===fp.fp_id ? null : fp.fp_id)}>
+                      <td style={{textAlign:"center",color:"var(--text-subtle)",fontSize:11,padding:"6px 4px"}}>
+                        {expanded===fp.fp_id?"▾":"▸"}
+                      </td>
+                      <td>
+                        <div style={{fontWeight:500,fontSize:13}}>{fp.test_name}</div>
+                        {fp.test_description && (
+                          <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2,maxWidth:200,
+                                       overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
+                               title={fp.test_description}>{fp.test_description}</div>
+                        )}
+                      </td>
+                      <td style={{fontSize:13,color:"var(--text-muted)",fontStyle:fp.note?"normal":"italic"}}>
+                        {fp.note||"—"}
+                      </td>
+                      <td className="cell-mono" style={{fontSize:12}}>{fp.marked_by||"—"}</td>
+                      <td className="cell-mono" style={{fontSize:12,whiteSpace:"nowrap"}}>
+                        {fp.marked_at?fmt(fp.marked_at):"—"}
+                      </td>
+                      <td style={{textAlign:"right",padding:"6px 12px",whiteSpace:"nowrap"}}
+                          onClick={e=>e.stopPropagation()}>
+                        <button className="btn btn-danger btn-xs"
+                                disabled={acting===fp.fp_id}
+                                onClick={()=>setRem(fp.fp_id)}>
+                          {acting===fp.fp_id?"⏳":"Remover"}
+                        </button>
+                      </td>
+                    </tr>
+                    {expanded===fp.fp_id && <RowExpandPanel rowDataStr={fp.row_data} colSpan={6}/>}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {/* ── Tab: Histórico ── */}
+      {tab==="history" && (
+        histLoad ? <div className="loading"><div className="spinner"/>Carregando histórico...</div>
+        : !hist || hist.length===0 ? (
+          <div className="empty">
+            <div className="empty-icon">📋</div>
+            <div className="empty-title">Nenhuma movimentação registrada ainda</div>
+            <div className="empty-sub">Cada marcação e remoção de FP aparece aqui.</div>
+          </div>
+        ) : (
+          <div style={{overflowX:"auto",border:"1px solid var(--border)",borderRadius:"var(--rs)"}}>
+            <table>
+              <thead>
+                <tr>
+                  <th style={{width:28}}/>
+                  <th style={{minWidth:100}}>Evento</th>
+                  <th style={{minWidth:160}}>Teste</th>
+                  <th style={{minWidth:200}}>Comentário</th>
+                  <th style={{minWidth:140}}>Responsável</th>
+                  <th style={{minWidth:120}}>Data/Hora</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hist.map((h,i) => (
+                  <React.Fragment key={i}>
+                    <tr style={{cursor:"pointer"}}
+                        onClick={()=>setHExp(hExpanded===i ? null : i)}>
+                      <td style={{textAlign:"center",color:"var(--text-subtle)",fontSize:11,padding:"6px 4px"}}>
+                        {hExpanded===i?"▾":"▸"}
+                      </td>
+                      <td>
+                        {h.event_type==="marked"
+                          ? <span className="badge badge-flagged" style={{fontSize:10}}>⚑ Marcado</span>
+                          : <span className="badge badge-cleared" style={{fontSize:10}}>✓ Removido</span>
+                        }
+                      </td>
+                      <td style={{fontSize:13,fontWeight:500}}>{h.test_name||"—"}</td>
+                      <td style={{fontSize:13,color:"var(--text-muted)",fontStyle:h.note?"normal":"italic"}}>
+                        {h.note||"—"}
+                      </td>
+                      <td className="cell-mono" style={{fontSize:12}}>{h.actor||"—"}</td>
+                      <td className="cell-mono" style={{fontSize:12,whiteSpace:"nowrap"}}>
+                        {h.event_at?fmt(h.event_at):"—"}
+                      </td>
+                    </tr>
+                    {hExpanded===i && <RowExpandPanel rowDataStr={h.row_data} colSpan={6}/>}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {/* Confirm remove dialog */}
+      {removing && (
+        <div className="overlay" style={{zIndex:300}} onMouseDown={e=>e.target===e.currentTarget&&setRem(null)}>
+          <div className="modal" style={{width:400}}>
+            <div className="modal-head">
+              <div className="modal-title">Remover marcação de FP?</div>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setRem(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p style={{fontSize:13,color:"var(--text-muted)"}}>
+                A linha voltará a ser contada como achado real na próxima execução do teste.
+                Esta ação ficará registrada no histórico.
+              </p>
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={()=>setRem(null)}>Cancelar</button>
+              <button className="btn btn-danger" onClick={()=>doRemove(removing)}>Remover FP</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ReviewQueue ───────────────────────────────────────────────────────────────
+function ReviewQueue({tests, user, onApprove, onReject, loading}) {
+  const [rejectId, setRid] = useState(null);
+  const [reason, setReason]= useState("");
+  const [acting, setActing]= useState(null);
+  const queue = tests.filter(t=>["UNDER_REVIEW","PENDING_DELETE"].includes(t.status));
+
+  async function doApprove(t){setActing(t.test_id);await onApprove(t);setActing(null);}
+  async function doReject(t){if(!reason.trim())return;setActing(t.test_id);await onReject(t,reason);setRid(null);setReason("");setActing(null);}
+
+  if(loading) return <div className="loading"><div className="spinner"/>Carregando...</div>;
+  if(!queue.length) return <div className="empty" style={{marginTop:40}}><div className="empty-icon">✅</div><div className="empty-title">Fila vazia</div><div className="empty-sub">Nenhum teste aguardando revisão.</div></div>;
+
+  return (
+    <div>
+      {queue.map(t=>{
+        const isOwn   = t.created_by===user?.email && !user?.can_self_review;
+        const isDel   = t.status==="PENDING_DELETE";
+        return (
+          <div className={`review-card${isDel?" delete-req":""}`} key={t.test_id}>
+            <div className="review-card-head">
+              {t.category&&<span style={{fontFamily:"var(--mono)",fontSize:10,color:"var(--text-subtle)"}}>{t.category}/</span>}
+              <span className="review-card-title">{t.test_name}</span>
+              <TypeBadge t={t.query_type}/>
+              <span className="badge badge-draft" style={{fontSize:10}}>v{t.version}</span>
+              {isDel&&<span className="badge badge-pdelete">🗑 Solicitação de Exclusão</span>}
+            </div>
+            <div className="review-meta">
+              <div className="meta-item"><span className="meta-lbl">Solicitado por</span><span className="meta-val">{t.created_by}</span></div>
+              <div className="meta-item"><span className="meta-lbl">Área</span><span className="meta-val">{t.responsible_area||"—"}</span></div>
+              <div className="meta-item"><span className="meta-lbl">Risco</span><span className="meta-val">{t.risco_id||"—"}</span></div>
+              {!isDel&&<><div className="meta-item"><span className="meta-lbl">Threshold</span><span className="meta-val">{t.threshold}</span></div><div className="meta-item"><span className="meta-lbl">Frequência</span><span className="meta-val">{t.frequency}</span></div></>}
+            </div>
+            {isDel
+              ? <div className="alert alert-warn">⚠️ Aprovar irá <strong>cancelar</strong> permanentemente. Rejeitar mantém o teste ativo.</div>
+              : <>
+                  {t.description&&<p style={{fontSize:12.5,color:"var(--text-muted)",marginBottom:10}}>{t.description}</p>}
+                  {t.query_type==="PYTHON"&&t.imports&&<div className="code-preview imports" style={{marginBottom:8,maxHeight:72}}>{t.imports}</div>}
+                  <div className="code-preview query" style={{marginBottom:12,maxHeight:160}}>{t.query_code}</div>
+                  <RunPreviewInline test={t}/>
+                </>
+            }
+            {isOwn&&<div className="alert alert-warn">⚠️ Você criou este teste e não pode aprová-lo.</div>}
+            {rejectId===t.test_id ? (
+              <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+                <div className="field" style={{flex:1}}>
+                  <label className="field-label">Motivo<span className="req">*</span></label>
+                  <input className="field-input" value={reason} onChange={e=>setReason(e.target.value)} autoFocus/>
+                </div>
+                <button className="btn btn-danger btn-sm" onClick={()=>doReject(t)} disabled={!reason.trim()||acting===t.test_id}>Confirmar</button>
+                <button className="btn btn-ghost btn-sm" onClick={()=>{setRid(null);setReason("");}}>Cancelar</button>
+              </div>
+            ):(
+              <div className="review-actions">
+                <button className="btn btn-danger btn-sm" disabled={isOwn||acting===t.test_id} onClick={()=>setRid(t.test_id)}>✕ {isDel?"Manter":"Rejeitar"}</button>
+                <button className="btn btn-success btn-sm" disabled={isOwn||acting===t.test_id} onClick={()=>doApprove(t)}>{acting===t.test_id?"...":(isDel?"✓ Confirmar Exclusão":"✓ Aprovar e Ativar")}</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── MultiStatusSelect ────────────────────────────────────────────────────────
+const ALL_STATUSES = [
+  {value:"ACTIVE",         label:"Ativo"},
+  {value:"DRAFT",          label:"Rascunho"},
+  {value:"UNDER_REVIEW",   label:"Em Revisão"},
+  {value:"PAUSED",         label:"Pausado"},
+  {value:"PENDING_DELETE", label:"Excl. Pendente"},
+  {value:"REJECTED",       label:"Rejeitado"},
+  {value:"CANCELLED",      label:"Cancelado"},
+];
+
+function MultiStatusSelect({selected, onChange}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef();
+
+  useEffect(()=>{
+    const fn = e => { if(ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, []);
+
+  function toggle(val) {
+    if (selected.includes(val)) {
+      onChange(selected.filter(s => s !== val));
+    } else {
+      onChange([...selected, val]);
+    }
+  }
+
+  const label = selected.length === 0
+    ? "Todos os status"
+    : selected.length === 1
+      ? (ALL_STATUSES.find(s => s.value === selected[0])?.label || selected[0])
+      : `${selected.length} status`;
+
+  return (
+    <div style={{position:"relative"}} ref={ref}>
+      <button
+        className="sel-filter"
+        onClick={()=>setOpen(o=>!o)}
+        style={{display:"flex",alignItems:"center",gap:8,minWidth:160,cursor:"pointer",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"var(--rs)",padding:"6px 10px",fontFamily:"var(--font)",fontSize:13,color:"var(--text)"}}
+      >
+        <span style={{flex:1,textAlign:"left"}}>{label}</span>
+        <span style={{color:"var(--text-subtle)",fontSize:10}}>▼</span>
+      </button>
+      {open && (
+        <div style={{position:"absolute",top:"100%",left:0,zIndex:50,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--rs)",boxShadow:"var(--sh)",minWidth:180,marginTop:3,padding:"4px 0"}}>
+          <div
+            style={{padding:"7px 12px",cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:8,borderBottom:"1px solid var(--border)",marginBottom:4}}
+            onClick={()=>onChange([])}
+          >
+            <span style={{width:14,height:14,border:"1px solid var(--border-strong)",borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:selected.length===0?"var(--primary)":"transparent",background:selected.length===0?"var(--primary-soft)":"white"}}>
+              {selected.length===0?"✓":""}
+            </span>
+            <span style={{color:selected.length===0?"var(--primary)":"var(--text-muted)"}}>Todos os status</span>
+          </div>
+          {ALL_STATUSES.map(s=>{
+            const checked = selected.includes(s.value);
+            return (
+              <div
+                key={s.value}
+                style={{padding:"7px 12px",cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:8,transition:"background .1s"}}
+                onClick={()=>toggle(s.value)}
+                onMouseEnter={e=>e.currentTarget.style.background="var(--surface-alt)"}
+                onMouseLeave={e=>e.currentTarget.style.background=""}
+              >
+                <span style={{width:14,height:14,border:`1px solid ${checked?"var(--primary)":"var(--border-strong)"}`,borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",background:checked?"var(--primary)":"white",flexShrink:0}}>
+                  {checked?"✓":""}
+                </span>
+                <span style={{color:checked?"var(--primary)":"var(--text)"}}>
+                  {s.label}
+                </span>
+                {checked && <span style={{marginLeft:"auto",width:6,height:6,borderRadius:"50%",background:"var(--primary)"}}/>}
+              </div>
+            );
+          })}
+          {selected.length > 0 && (
+            <div style={{borderTop:"1px solid var(--border)",marginTop:4,padding:"6px 12px"}}>
+              <button
+                className="btn btn-ghost btn-xs"
+                style={{width:"100%",justifyContent:"center"}}
+                onClick={()=>onChange([])}
+              >
+                Limpar seleção
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── TestList ──────────────────────────────────────────────────────────────────
+function TestList({tests, loading, onSelect, onNew}) {
+  const [search,   setSearch]   = useState("");
+  const [statuses, setStatuses] = useState(["ACTIVE","PAUSED","UNDER_REVIEW"]);
+  const filtered = tests.filter(t=>{
+    const q=search.toLowerCase();
+    const ms=(t.test_name||"").toLowerCase().includes(q)||(t.responsible_area||"").toLowerCase().includes(q)||(t.category||"").toLowerCase().includes(q);
+    const ss=statuses.length===0 || statuses.includes(t.status);
+    return ms && ss;
+  });
+  return (
+    <div className="table-card">
+      <div className="table-toolbar">
+        <span className="table-title">Testes de Auditoria</span>
+        <input className="inp-search" placeholder="Buscar..." value={search} onChange={e=>setSearch(e.target.value)}/>
+        <MultiStatusSelect selected={statuses} onChange={setStatuses}/>
+        <button className="btn btn-primary" onClick={onNew}>+ Novo Teste</button>
+      </div>
+      {loading?<div className="loading"><div className="spinner"/>Carregando...</div>:
+       filtered.length===0?<div className="empty"><div className="empty-icon">🔎</div><div className="empty-title">Nenhum teste encontrado</div></div>:(
+        <table>
+          <thead><tr><th>Teste</th><th>Área</th><th>Tipo</th><th>Freq.</th><th>Última Execução</th><th>Status do Teste</th><th>Achados</th><th>Status</th></tr></thead>
+          <tbody>
+            {filtered.map(t=>(
+              <tr key={t.test_id} onClick={()=>onSelect(t)}>
+                <td>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <div className="cell-name">{t.test_name}</div>
+
+                  </div>
+                  {t.category&&<div className="cell-sub">{t.category}</div>}
+                </td>
+                <td style={{fontSize:12.5,color:"var(--text-muted)"}}>{t.responsible_area||"—"}</td>
+                <td><TypeBadge t={t.query_type}/></td>
+                <td className="cell-mono">{t.frequency}</td>
+                <td className="cell-mono">{fmt(t.last_run)}</td>
+                <td><AlertStatusBadge status={t.last_alert_status}/></td>
+                <td>{t.last_incident_count!=null?<span className="cell-count" style={{color:t.last_incident_count>0?"var(--danger)":"var(--success)"}}>{t.last_incident_count}</span>:<span style={{color:"var(--text-subtle)"}}>—</span>}</td>
+                <td><StatusBadge s={t.status}/></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ── BarChart ──────────────────────────────────────────────────────────────────
+function BarChart({data, labelKey, valueKey, color="#4f46e5"}) {
+  const ref = useRef();
+  useEffect(()=>{
+    if(!ref.current||!data?.length) return;
+    const ctx = ref.current.getContext("2d");
+    const ch = new Chart(ctx, {
+      type:"bar",
+      data:{labels:data.map(d=>d[labelKey]),datasets:[{data:data.map(d=>d[valueKey]),backgroundColor:color+"bb",borderColor:color,borderWidth:1,borderRadius:4}]},
+      options:{
+        indexAxis:"y",responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.parsed.x} teste(s)`}}},
+        scales:{
+          x:{ticks:{stepSize:1,font:{family:"JetBrains Mono",size:11}},grid:{color:"rgba(0,0,0,.05)"},beginAtZero:true},
+          y:{ticks:{font:{family:"Inter",size:11.5},maxRotation:0},grid:{display:false}},
+        },
+      },
+    });
+    return ()=>ch.destroy();
+  },[JSON.stringify(data)]);
+  if(!data?.length) return <div className="empty" style={{padding:"24px"}}><div className="empty-sub">Sem dados</div></div>;
+  const h = Math.min(380, Math.max(160, data.length * 30));
+  return <div style={{position:"relative",height:h+"px",width:"100%"}}><canvas ref={ref}/></div>;
+}
+
+// ── DonutChart ────────────────────────────────────────────────────────────────
+function DonutChart({cleared, flagged, error=0}) {
+  const ref  = useRef();
+  const total = cleared + flagged + error;
+  useEffect(()=>{
+    if(!ref.current) return;
+    const ctx = ref.current.getContext("2d");
+    const ch = new Chart(ctx, {
+      type:"doughnut",
+      data:{
+        labels:["Cleared","Flagged","Error"],
+        datasets:[{
+          data:[cleared,flagged,error],
+          backgroundColor:["#05966966","#dc262666","#d9770666"],
+          borderColor:["#059669","#dc2626","#d97706"],
+          borderWidth:2,
+        }],
+      },
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        plugins:{
+          legend:{position:"bottom",labels:{font:{family:"Inter",size:11.5},padding:12,boxWidth:12}},
+          tooltip:{callbacks:{label:c=>`${c.label}: ${c.parsed} (${Math.round(c.parsed/Math.max(1,total)*100)}%)`}},
+        },
+        cutout:"62%",
+      },
+    });
+    return ()=>ch.destroy();
+  },[cleared,flagged,error]);
+  return <div style={{position:"relative",height:"220px",width:"220px",margin:"0 auto"}}><canvas ref={ref}/></div>;
+}
+
+// ── ViewChartCanvas ───────────────────────────────────────────────────────────
+// Separate component so canvas ref is always mounted before the Chart.js effect fires
+function ViewChartCanvas({data}) {
+  const ref = useRef();
+  useEffect(() => {
+    if (!ref.current) return;
+    const colors = PALETTE_COLORS[data.palette] || PALETTE_COLORS.blue;
+    const ctx    = ref.current.getContext("2d");
+    let cfg;
+
+    if (data.chart_type === "pie") {
+      cfg = {
+        type: "doughnut",
+        data: {
+          labels: data.labels,
+          datasets: [{
+            data: (data.datasets[0] || {data:[]}).data,
+            backgroundColor: data.labels.map((_,i) => colors[i % colors.length] + "cc"),
+            borderColor:     data.labels.map((_,i) => colors[i % colors.length]),
+            borderWidth: 1,
+          }],
+        },
+        options: {
+          responsive:true, maintainAspectRatio:false,
+          plugins:{
+            legend:{position:"bottom", labels:{font:{family:"Inter",size:11},boxWidth:11,padding:10}},
+          },
+          cutout:"52%",
+        },
+      };
+    } else {
+      const isH = data.chart_type === "bar_h";
+      const isL = data.chart_type === "line";
+      cfg = {
+        type: isL ? "line" : "bar",
+        data: {
+          labels: data.labels,
+          datasets: data.datasets.map((ds, i) => {
+            const c = colors[i % colors.length];
+            return {
+              label: ds.label, data: ds.data,
+              backgroundColor: isL ? c + "33" : c + "cc",
+              borderColor: c, borderWidth: isL ? 2 : 1,
+              borderRadius: isL ? 0 : 4,
+              tension: isL ? 0.3 : 0,
+              fill: isL && data.datasets.length === 1,
+              pointRadius: isL ? 3 : 0,
+              pointHoverRadius: isL ? 5 : 0,
+            };
+          }),
+        },
+        options: {
+          indexAxis: isH ? "y" : "x",
+          responsive:true, maintainAspectRatio:false,
+          plugins:{
+            legend:{display: data.datasets.length > 1, position:"bottom", labels:{font:{family:"Inter",size:11},boxWidth:11,padding:10}},
+          },
+          scales:{
+            x:{ticks:{font:{family:"Inter",size:10.5}, maxRotation: isH ? 0 : 40, maxTicksLimit:12}, grid:{color:"rgba(0,0,0,.04)"}},
+            y:{ticks:{font:{family:"Inter",size:10.5}}, grid:{color:"rgba(0,0,0,.04)"}, beginAtZero:true},
+          },
+        },
+      };
+    }
+
+    const chart = new Chart(ctx, cfg);
+    return () => chart.destroy();
+  }, [JSON.stringify(data)]);
+
+  const h = data.chart_type === "bar_h"
+    ? Math.min(440, Math.max(160, (data.labels || []).length * 26))
+    : 240;
+
+  return (
+    <div style={{position:"relative", height:h+"px", width:"100%"}}>
+      <canvas ref={ref}/>
+    </div>
+  );
+}
+
+// ── ChartCard ─────────────────────────────────────────────────────────────────
+function ChartCard({chart, isFirst, isLast, onEdit, onDelete, onMove}) {
+  const [data,    setData]    = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState(null);
+
+  function load() {
+    setLoading(true); setError(null);
+    api.getChartData(chart.chart_id)
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setError(e.message || "Erro ao carregar gráfico"); setLoading(false); });
+  }
+
+  useEffect(() => { load(); }, [chart.chart_id, chart.updated_at]);
+
+  const isFull   = chart.width === "full";
+  const colors   = PALETTE_COLORS[(data?.palette) || "blue"] || PALETTE_COLORS.blue;
+
+  return (
+    <div className="dash-card" style={{gridColumn: isFull ? "span 2" : "span 1", minHeight:200}}>
+      {/* Header row */}
+      <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:10}}>
+        <span style={{flex:1,fontSize:13,fontWeight:600,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{chart.title}</span>
+        <span style={{fontSize:9.5,fontFamily:"var(--mono)",color:"var(--text-subtle)",
+          background:"var(--surface-alt)",padding:"1px 5px",borderRadius:3,flexShrink:0,marginRight:4}}>
+          {isFull ? "↔ full" : "½"}
+        </span>
+        <button className="btn btn-ghost btn-xs" onClick={()=>onMove("up")}  disabled={isFirst} title="Mover para cima"  style={{padding:"3px 6px",minWidth:24}}>↑</button>
+        <button className="btn btn-ghost btn-xs" onClick={()=>onMove("down")} disabled={isLast}  title="Mover para baixo" style={{padding:"3px 6px",minWidth:24}}>↓</button>
+        <button className="btn btn-ghost btn-xs" onClick={onEdit}   title="Editar gráfico"  style={{padding:"3px 7px"}}>✎</button>
+        <button className="btn btn-ghost btn-xs" onClick={onDelete} title="Excluir gráfico" style={{padding:"3px 7px",color:"var(--danger)"}}>✕</button>
+      </div>
+
+      {loading ? (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:140}}>
+          <div className="spinner"/>
+        </div>
+      ) : error ? (
+        <div>
+          <div className="val-error" style={{fontSize:11}}>{error}</div>
+          <button className="btn btn-ghost btn-xs" onClick={load} style={{marginTop:6}}>↺ Tentar novamente</button>
+        </div>
+      ) : data && data.chart_type === "kpi" ? (
+        <div style={{textAlign:"center",padding:"12px 0 4px"}}>
+          <div style={{fontSize:52,fontWeight:700,lineHeight:1,color:colors[0],letterSpacing:"-2px"}}>
+            {typeof data.kpi_value === "number" ? data.kpi_value.toLocaleString("pt-BR") : (data.kpi_value ?? 0)}
+          </div>
+          <div style={{fontSize:11.5,color:"var(--text-subtle)",marginTop:6,fontFamily:"var(--mono)"}}>{data.kpi_label || "Total"}</div>
+        </div>
+      ) : !data || (data.labels || []).length === 0 ? (
+        <div className="empty" style={{padding:"24px 0"}}><div className="empty-sub">Sem dados no período</div></div>
+      ) : (
+        <ViewChartCanvas data={data}/>
+      )}
+    </div>
+  );
+}
+
+// ── ViewPage ──────────────────────────────────────────────────────────────────
+function ViewPage({view, tests}) {
+  const [charts,       setCharts]       = useState([]);
+  const [loadingCharts,setLoadingCharts]= useState(true);
+  const [chartModal,   setChartModal]   = useState(null); // null | {mode:"add"} | {mode:"edit", chart}
+
+  function loadCharts() {
+    setLoadingCharts(true);
+    api.listViewCharts(view.view_id)
+      .then(r => { setCharts(Array.isArray(r) ? r : []); setLoadingCharts(false); })
+      .catch(() => setLoadingCharts(false));
+  }
+
+  useEffect(() => { loadCharts(); }, [view.view_id]);
+
+  function handleDelete(chart) {
+    if (!window.confirm(`Excluir o gráfico "${chart.title}"?`)) return;
+    api.deleteChart(chart.chart_id)
+      .then(loadCharts)
+      .catch(e => alert("Erro ao excluir: " + (e.message || e)));
+  }
+
+  function handleMove(chart, dir) {
+    api.moveChart(chart.chart_id, dir).then(loadCharts).catch(()=>{});
+  }
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:14}}>
+        <button className="btn btn-primary btn-sm" onClick={()=>setChartModal({mode:"add"})}>
+          + Adicionar Gráfico
+        </button>
+      </div>
+
+      {loadingCharts ? (
+        <div className="loading"><div className="spinner"/>Carregando gráficos...</div>
+      ) : charts.length === 0 ? (
+        <div className="empty" style={{padding:"48px 0"}}>
+          <div style={{fontSize:32,marginBottom:8}}>📊</div>
+          <div style={{fontWeight:600,marginBottom:4}}>Nenhum gráfico ainda</div>
+          <div className="empty-sub">Clique em "Adicionar Gráfico" para começar</div>
+        </div>
+      ) : (
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          {charts.map((c, idx) => (
+            <ChartCard
+              key={c.chart_id}
+              chart={c}
+              isFirst={idx === 0}
+              isLast={idx === charts.length - 1}
+              onEdit={()=>setChartModal({mode:"edit", chart: c})}
+              onDelete={()=>handleDelete(c)}
+              onMove={dir=>handleMove(c, dir)}
+            />
+          ))}
+        </div>
+      )}
+
+      {chartModal && (
+        <ChartEditorModal
+          tests={tests}
+          chart={chartModal.mode === "edit" ? chartModal.chart : null}
+          onClose={()=>setChartModal(null)}
+          onSave={async body => {
+            if (chartModal.mode === "edit") {
+              await api.updateChart(chartModal.chart.chart_id, body);
+            } else {
+              await api.addChart(view.view_id, body);
+            }
+            setChartModal(null);
+            loadCharts();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── ViewNameModal — create / rename a view (page) ─────────────────────────────
+function ViewNameModal({initialTitle, isRename, onClose, onSave}) {
+  const [title,  setTitle]  = useState(initialTitle || "");
+  const [saving, setSaving] = useState(false);
+  const [err,    setErr]    = useState("");
+
+  async function handleSave() {
+    setErr("");
+    if (!title.trim()) { setErr("O nome da view é obrigatório."); return; }
+    setSaving(true);
+    try {
+      await onSave(title.trim());
+      onClose();
+    } catch(e) {
+      setErr(e.message || "Erro ao salvar.");
+      setSaving(false);
+    }
+  }
+
+  function handleKey(e) { if (e.key === "Enter") handleSave(); }
+
+  return (
+    <div className="overlay" onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal" style={{maxWidth:440}}>
+        <div className="modal-head">
+          <div className="modal-title">{isRename ? "Renomear View" : "Nova View"}</div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div className="field">
+            <label className="field-label">Nome <span className="req">*</span></label>
+            <input className="field-input" value={title} onChange={e=>setTitle(e.target.value)}
+              onKeyDown={handleKey} placeholder="ex: Disponibilidade de Sistemas" autoFocus/>
+          </div>
+          {!isRename && (
+            <div style={{marginTop:8,fontSize:11.5,color:"var(--text-subtle)"}}>
+              Você poderá adicionar gráficos após criar a view. Limite: 20 views, 16 gráficos por view.
+            </div>
+          )}
+          {err && <div className="val-error" style={{marginTop:8}}>⚠️ {err}</div>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving || !title.trim()}>
+            {saving ? "Salvando..." : isRename ? "Renomear" : "Criar View →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ChartEditorModal — add / edit a chart widget ──────────────────────────────
+function ChartEditorModal({tests, chart, onClose, onSave}) {
+  // chart=null → adding new; chart=object → editing existing
+  const cfg = chart ? (typeof chart.config === "string" ? JSON.parse(chart.config || "{}") : (chart.config || {})) : {};
+
+  // ALL state at top — never inside conditions/IIFEs
+  const [title,      setTitle]      = useState(chart?.title      || "");
+  const [chartType,  setChartType]  = useState(chart?.chart_type || "bar");
+  const [width,      setWidth]      = useState(chart?.width      || "half");
+  const [testId,     setTestId]     = useState(chart?.test_id    || "");
+  const [cols,       setCols]       = useState(null);
+  const [colsLoad,   setColsLoad]   = useState(false);
+  const [xAxis,      setXAxis]      = useState(cfg.x_axis        || "ArchiveDate");
+  const [yAgg,       setYAgg]       = useState(cfg.y_aggregation || "COUNT");
+  const [yCol,       setYCol]       = useState(cfg.y_column      || "");
+  const [groupBy,    setGroupBy]    = useState(cfg.group_by      || "");
+  const [topNSeries, setTopNSeries] = useState(String(cfg.top_n_series || "8"));
+  const [dateRange,  setDateRange]  = useState(cfg.date_range    || "30d");
+  const [palette,    setPalette]    = useState(cfg.palette       || "blue");
+  const [saving,     setSaving]     = useState(false);
+  const [err,        setErr]        = useState("");
+
+  const isEdit     = !!chart;
+  const activeTests = tests.filter(t => t.status === "ACTIVE");
+  const needsYCol  = yAgg !== "COUNT";
+
+  // Load columns when testId changes
+  useEffect(() => {
+    if (!testId) { setCols(null); return; }
+    setColsLoad(true);
+    api.getIncidentCols(testId)
+      .then(r => { setCols(r); setColsLoad(false); })
+      .catch(() => { setCols(null); setColsLoad(false); });
+  }, [testId]);
+
+  // Clear y_column when switching to COUNT
+  useEffect(() => {
+    if (yAgg === "COUNT") setYCol("");
+  }, [yAgg]);
+
+  async function handleSave() {
+    setErr("");
+    if (!title.trim())            { setErr("O título é obrigatório."); return; }
+    if (!testId)                  { setErr("Selecione um teste."); return; }
+    if (needsYCol && !yCol)       { setErr("Selecione a coluna Y para a agregação escolhida."); return; }
+    setSaving(true);
+    const body = {
+      title: title.trim(), chart_type: chartType, test_id: testId, width,
+      config: {
+        x_axis: xAxis,
+        y_aggregation: yAgg,
+        y_column: yCol || null,
+        group_by: groupBy || null,
+        top_n_series: parseInt(topNSeries) || 8,
+        date_range: dateRange,
+        palette,
+      },
+    };
+    try {
+      await onSave(body);
+    } catch(e) {
+      setErr(e.message || "Erro ao salvar gráfico.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="overlay" onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal modal-lg">
+        <div className="modal-head">
+          <div>
+            <div className="modal-title">{isEdit ? "Editar Gráfico" : "Novo Gráfico"}</div>
+            <div className="modal-sub">{isEdit ? "Altere as configurações do gráfico" : "Configure e adicione à view atual"}</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-body">
+          {/* Title + Width */}
+          <div className="form-grid" style={{marginBottom:14}}>
+            <div className="field">
+              <label className="field-label">Título <span className="req">*</span></label>
+              <input className="field-input" value={title} onChange={e=>setTitle(e.target.value)}
+                placeholder="ex: Disponibilidade por Sistema" autoFocus/>
+            </div>
+            <div className="field">
+              <label className="field-label">Largura</label>
+              <div style={{display:"flex",gap:8,marginTop:2}}>
+                {[["half","½ Metade"],["full","↔ Largura Total"]].map(([v,l])=>(
+                  <button key={v} type="button" onClick={()=>setWidth(v)} style={{
+                    flex:1, padding:"8px 10px", cursor:"pointer", borderRadius:"var(--rs)", fontSize:12,
+                    border:`2px solid ${width===v?"var(--primary)":"var(--border)"}`,
+                    background: width===v?"var(--primary-soft)":"var(--surface)",
+                    color: width===v?"var(--primary)":"var(--text-muted)", fontWeight: width===v?600:400,
+                  }}>{l}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Chart type + Test */}
+          <div className="form-grid" style={{marginBottom:14}}>
+            <div className="field">
+              <label className="field-label">Tipo de Gráfico <span className="req">*</span></label>
+              <select className="field-select" value={chartType} onChange={e=>setChartType(e.target.value)}>
+                <option value="bar">Barras Verticais</option>
+                <option value="bar_h">Barras Horizontais</option>
+                <option value="line">Linha (tendência)</option>
+                <option value="pie">Pizza / Donut</option>
+                <option value="kpi">KPI (número único)</option>
+              </select>
+            </div>
+            <div className="field">
+              <label className="field-label">Fonte de Dados <span className="req">*</span></label>
+              <select className="field-select" value={testId} onChange={e=>setTestId(e.target.value)}>
+                <option value="">Selecionar teste...</option>
+                {activeTests.map(t=><option key={t.test_id} value={t.test_id}>{t.test_name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Axis / aggregation config */}
+          {testId && (
+            colsLoad ? (
+              <div className="loading" style={{padding:"8px 0"}}><div className="spinner"/> Carregando colunas...</div>
+            ) : (
+              <div className="form-grid" style={{marginBottom:14}}>
+                {chartType !== "kpi" && (
+                  <div className="field">
+                    <label className="field-label">Eixo X</label>
+                    <select className="field-select" value={xAxis} onChange={e=>setXAxis(e.target.value)}>
+                      <option value="ArchiveDate">Data de Execução</option>
+                      {(cols?.categorical_cols || []).map(c=><option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div className="field">
+                  <label className="field-label">Agregação Y</label>
+                  <select className="field-select" value={yAgg} onChange={e=>setYAgg(e.target.value)}>
+                    <option value="COUNT">COUNT — total de linhas</option>
+                    <option value="SUM">SUM — soma</option>
+                    <option value="AVG">AVG — média</option>
+                    <option value="MIN">MIN — mínimo</option>
+                    <option value="MAX">MAX — máximo</option>
+                  </select>
+                </div>
+                {needsYCol && (
+                  <div className="field">
+                    <label className="field-label">Coluna Y <span className="req">*</span></label>
+                    <select className="field-select" value={yCol} onChange={e=>setYCol(e.target.value)}>
+                      <option value="">Selecionar coluna...</option>
+                      {(cols?.numeric_cols || []).map(c=><option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                )}
+                {chartType !== "kpi" && chartType !== "pie" && (
+                  <div className="field">
+                    <label className="field-label">Agrupar por (multi-série)</label>
+                    <select className="field-select" value={groupBy} onChange={e=>setGroupBy(e.target.value)}>
+                      <option value="">Sem agrupamento</option>
+                      {(cols?.categorical_cols || []).map(c=><option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                )}
+                {groupBy && chartType !== "kpi" && (
+                  <div className="field">
+                    <label className="field-label">Top N séries</label>
+                    <select className="field-select" value={topNSeries} onChange={e=>setTopNSeries(e.target.value)}>
+                      <option value="5">5</option>
+                      <option value="8">8</option>
+                      <option value="10">10</option>
+                      <option value="20">20</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            )
+          )}
+
+          {/* Date range + Palette */}
+          <div className="form-grid" style={{marginBottom:14}}>
+            <div className="field">
+              <label className="field-label">Período</label>
+              <select className="field-select" value={dateRange} onChange={e=>setDateRange(e.target.value)}>
+                <option value="7d">Últimos 7 dias</option>
+                <option value="30d">Últimos 30 dias</option>
+                <option value="90d">Últimos 90 dias</option>
+                <option value="all">Todo o histórico</option>
+              </select>
+            </div>
+            <div className="field">
+              <label className="field-label">Paleta de Cores</label>
+              <div style={{display:"flex",gap:8,marginTop:2}}>
+                {PALETTE_META.map(p=>(
+                  <button key={p.value} type="button" onClick={()=>setPalette(p.value)} style={{
+                    flex:1, display:"flex", flexDirection:"column", gap:5, padding:"7px 10px",
+                    cursor:"pointer", borderRadius:"var(--rs)",
+                    border:`2px solid ${palette===p.value?"var(--primary)":"var(--border)"}`,
+                    background: palette===p.value?"var(--primary-soft)":"var(--surface)",
+                  }}>
+                    <div style={{display:"flex",gap:3,justifyContent:"center"}}>
+                      {p.colors.map((c,i)=><div key={i} style={{width:14,height:14,borderRadius:"50%",background:c}}/>)}
+                    </div>
+                    <span style={{fontSize:10,fontFamily:"var(--mono)",textAlign:"center",whiteSpace:"nowrap",
+                      color:palette===p.value?"var(--primary)":"var(--text-muted)",overflow:"hidden",textOverflow:"ellipsis"}}>
+                      {p.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {err && <div className="val-error" style={{marginTop:8}}>⚠️ {err}</div>}
+        </div>
+
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={handleSave}
+            disabled={saving || !title.trim() || !testId || (needsYCol && !yCol)}>
+            {saving ? "Salvando..." : isEdit ? "Salvar Alterações" : "Adicionar Gráfico →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+function Dashboard({tests, areas}) {
+  const [filters, setFilters] = useState({date_from:"",date_to:"",result:"",area:"",test_name:"",notify:""});
+  const [dash, setDash]       = useState(null);
+  const [loading, setLoad]    = useState(true);
+  const [dashTab, setDashTab] = useState("execucoes");
+  const [views, setViews]     = useState([]);
+  // viewModal: null | "new" | {mode:"rename", view_id, title}
+  const [viewModal, setViewModal] = useState(null);
+  const setF = (k,v) => setFilters(f=>({...f,[k]:v}));
+
+  function loadViews() {
+    api.getDashViews()
+      .then(r => setViews(Array.isArray(r) ? r : []))
+      .catch(() => {});
+  }
+
+  useEffect(() => { loadViews(); }, []);
+
+  useEffect(()=>{
+    const p = Object.fromEntries(Object.entries(filters).filter(([,v])=>v));
+    setLoad(true);
+    api.getDashboard(p).then(d=>{setDash(d);setLoad(false);}).catch(()=>setLoad(false));
+  },[JSON.stringify(filters)]);
+
+  const kpi = dash?.kpis||{};
+  const testNames = [...new Set(tests.map(t=>t.test_name))].sort();
+
+  const KPIS = [
+    {key:"total_tests",  label:"Testes Implementados", cls:"c-indigo"},
+    {key:"risks_covered",label:"Riscos Cobertos",       cls:"c-blue"},
+    {key:"areas_covered",label:"Áreas Cobertas",        cls:"c-slate"},
+    {key:"runs_total",   label:"Total de Runs",         cls:"c-amber"},
+    {key:"runs_cleared", label:"Runs Cleared",          cls:"c-green"},
+    {key:"runs_flagged", label:"Runs Flagged",          cls:"c-red"},
+  ];
+
+  return (
+    <div>
+      {/* Filters */}
+      <div className="dash-filters">
+        <div className="filter-group">
+          <span className="filter-label">Data de Execução — De</span>
+          <input type="date" className="filter-input" value={filters.date_from} onChange={e=>setF("date_from",e.target.value)}/>
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">Até</span>
+          <input type="date" className="filter-input" value={filters.date_to} onChange={e=>setF("date_to",e.target.value)}/>
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">Resultado</span>
+          <select className="filter-input" value={filters.result} onChange={e=>setF("result",e.target.value)}>
+            <option value="">Todos</option>
+            <option value="PASSED">Cleared</option>
+            <option value="FAILED">Flagged</option>
+            <option value="ERROR">Error</option>
+          </select>
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">Área</span>
+          <select className="filter-input" value={filters.area} onChange={e=>setF("area",e.target.value)}>
+            <option value="">Todas</option>
+            {(Array.isArray(areas)?areas:(areas?.data||[])).map(a=><option key={a.Area} value={a.Area}>{a.Area}</option>)}
+          </select>
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">Nome do Teste</span>
+          <select className="filter-input" value={filters.test_name} onChange={e=>setF("test_name",e.target.value)}>
+            <option value="">Todos</option>
+            {testNames.map(n=><option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">Notifica?</span>
+          <select className="filter-input" value={filters.notify} onChange={e=>setF("notify",e.target.value)}>
+            <option value="">Todos</option>
+            <option value="true">Sim</option>
+            <option value="false">Não</option>
+          </select>
+        </div>
+        <div className="filter-group" style={{justifyContent:"flex-end"}}>
+          <span className="filter-label"> </span>
+          <button className="btn btn-ghost btn-sm" onClick={()=>setFilters({date_from:"",date_to:"",result:"",area:"",test_name:"",notify:""})}>Limpar filtros</button>
+        </div>
+      </div>
+
+      {loading ? <div className="loading"><div className="spinner"/>Carregando dashboard...</div> : (
+        <>
+          {/* KPIs */}
+          <div className="kpi-grid">
+            {KPIS.map(k=>(
+              <div key={k.key} className={`kpi-card ${k.cls}`}>
+                <div className="kpi-label">{k.label}</div>
+                <div className="kpi-val">{kpi[k.key]??0}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* View tabs */}
+          <div>
+            <div style={{display:"flex",gap:0,borderBottom:"1px solid var(--border)",marginBottom:16,background:"var(--surface)",borderRadius:"var(--r) var(--r) 0 0",border:"1px solid var(--border)",borderBottomColor:"transparent",flexWrap:"wrap"}}>
+              {[["execucoes","Por Execuções"],["testes","Por Testes"]].map(([id,lbl])=>(
+                <button key={id}
+                  onClick={()=>setDashTab(id)}
+                  style={{padding:"10px 20px",border:"none",background:"none",fontSize:13,cursor:"pointer",
+                    color:dashTab===id?"var(--primary)":"var(--text-muted)",
+                    borderBottom:dashTab===id?"2px solid var(--primary)":"2px solid transparent",
+                    fontWeight:dashTab===id?500:400,transition:"all .15s",flexShrink:0
+                  }}>
+                  {lbl}
+                </button>
+              ))}
+              {/* Custom view tabs */}
+              {views.map(v => {
+                const tabId = `view:${v.view_id}`;
+                const active = dashTab === tabId;
+                return (
+                  <div key={v.view_id} style={{display:"flex",alignItems:"stretch",flexShrink:0,maxWidth:220,
+                    borderBottom:active?"2px solid var(--primary)":"2px solid transparent"}}>
+                    <button
+                      onClick={()=>setDashTab(tabId)}
+                      style={{display:"flex",alignItems:"center",padding:"10px 8px 10px 16px",border:"none",
+                        background:"none",fontSize:13,cursor:"pointer",
+                        color:active?"var(--primary)":"var(--text-muted)",
+                        fontWeight:active?500:400,transition:"color .15s",
+                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
+                      {v.title}
+                    </button>
+                    {active && (
+                      <div style={{display:"flex",alignItems:"center",gap:1,paddingRight:6}}>
+                        <span title="Renomear view" onClick={e=>{e.stopPropagation();setViewModal({mode:"rename",view_id:v.view_id,title:v.title});}}
+                          style={{fontSize:11,color:"var(--text-subtle)",cursor:"pointer",padding:"2px 4px",
+                                  borderRadius:3,lineHeight:1,display:"flex",alignItems:"center"}}>✎</span>
+                        <span title="Excluir view" onClick={e=>{
+                            e.stopPropagation();
+                            if (!window.confirm(`Excluir a view "${v.title}" e todos os seus gráficos?`)) return;
+                            api.deleteDashView(v.view_id).then(()=>{ setDashTab("execucoes"); loadViews(); }).catch(()=>{});
+                          }}
+                          style={{fontSize:11,color:"var(--text-subtle)",cursor:"pointer",padding:"2px 4px",
+                                  borderRadius:3,lineHeight:1,display:"flex",alignItems:"center"}}>✕</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {/* Add new view button */}
+              {views.length < 20 && (
+                <button onClick={()=>setViewModal("new")}
+                  style={{padding:"10px 16px",border:"none",background:"none",fontSize:13,cursor:"pointer",
+                    color:"var(--text-subtle)",borderBottom:"2px solid transparent",
+                    transition:"all .15s",flexShrink:0,display:"flex",alignItems:"center",gap:5}}
+                  title="Criar nova view">
+                  <span style={{fontSize:16,lineHeight:1}}>+</span>
+                  <span style={{fontSize:12}}>View</span>
+                </button>
+              )}
+            </div>
+
+                {/* ── Por Execuções ── */}
+                {dashTab==="execucoes" && (
+                  <div className="dash-grid" style={{gridTemplateColumns:"1fr 1fr"}}>
+                    <div className="dash-card" style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
+                      <div className="dash-card-title" style={{alignSelf:"flex-start"}}>Distribuição de Resultados</div>
+                      <DonutChart cleared={kpi.runs_cleared||0} flagged={kpi.runs_flagged||0} error={kpi.runs_error||0}/>
+                      <div style={{display:"flex",gap:16,marginTop:8,fontSize:12,justifyContent:"center",flexWrap:"wrap"}}>
+                        <span><span style={{color:"var(--success)",fontWeight:600}}>■</span> Cleared: {kpi.runs_cleared||0}</span>
+                        <span><span style={{color:"var(--danger)",fontWeight:600}}>■</span> Flagged: {kpi.runs_flagged||0}</span>
+                        <span><span style={{color:"var(--warning)",fontWeight:600}}>■</span> Error: {kpi.runs_error||0}</span>
+                      </div>
+                      {(kpi.runs_cleared||0)+(kpi.runs_flagged||0)+(kpi.runs_error||0) > 0 && (
+                        <div style={{marginTop:12,padding:"8px 16px",background:"var(--surface-alt)",borderRadius:"var(--rs)",fontSize:12,color:"var(--text-muted)",textAlign:"center"}}>
+                          Taxa de Achados:{" "}
+                          <strong style={{color:((kpi.runs_flagged||0)/Math.max(1,(kpi.runs_cleared||0)+(kpi.runs_flagged||0)))>0.1?"var(--danger)":"var(--success)"}}>
+                            {Math.round((kpi.runs_flagged||0)/Math.max(1,(kpi.runs_cleared||0)+(kpi.runs_flagged||0)+(kpi.runs_error||0))*100)}%
+                          </strong>
+                          {" "}das execuções retornaram achados
+                        </div>
+                      )}
+                    </div>
+                    <div className="dash-card">
+                      <div className="dash-card-title">Resumo do período</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:4}}>
+                        {[
+                          {label:"Total de execuções",   val:kpi.runs_total||0,   color:"var(--text)"},
+                          {label:"Execuções Cleared",    val:kpi.runs_cleared||0, color:"var(--success)"},
+                          {label:"Execuções Flagged",    val:kpi.runs_flagged||0, color:"var(--danger)"},
+                          {label:"Execuções com Erro",   val:kpi.runs_error||0,   color:"var(--warning)"},
+                        ].map(r=>(
+                          <div key={r.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
+                            <span style={{fontSize:13,color:"var(--text-muted)"}}>{r.label}</span>
+                            <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:18,color:r.color}}>{r.val}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Por Testes ── */}
+                {dashTab==="testes" && (
+                  <>
+                    {/* Top row: coverage charts */}
+                    <div className="dash-grid" style={{gridTemplateColumns:"1fr 1fr",marginBottom:16}}>
+                      <div className="dash-card">
+                        <div className="dash-card-title">Cobertura por Área</div>
+                        <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:10}}>Quantidade de testes ativos por área</div>
+                        <BarChart data={dash?.by_area} labelKey="area" valueKey="cnt" color="#4f46e5"/>
+                      </div>
+                      <div className="dash-card">
+                        <div className="dash-card-title">Cobertura por Risco</div>
+                        <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:10}}>Riscos com maior número de testes mapeados</div>
+                        <BarChart data={dash?.by_risk} labelKey="risk_title" valueKey="cnt" color="#7c3aed"/>
+                      </div>
+                    </div>
+
+                    {/* Top testes com achados */}
+                    {(()=>{
+                      const topFlagged = (dash?.by_test_status||[])
+                        .filter(t=>(t.flagged_runs||0)>0)
+                        .sort((a,b)=>(b.flagged_runs||0)-(a.flagged_runs||0))
+                        .slice(0,15)
+                        .map(t=>({label:t.test_name, cnt:t.flagged_runs||0}));
+                      return topFlagged.length > 0 ? (
+                        <div className="dash-card" style={{marginBottom:16}}>
+                          <div className="dash-card-title">Top Testes com Achados no Período</div>
+                          <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:10}}>Testes ordenados por número de execuções Flagged — indica onde os riscos estão se materializando</div>
+                          <BarChart data={topFlagged} labelKey="label" valueKey="cnt" color="#dc2626"/>
+                        </div>
+                      ) : null;
+                    })()}
+
+                    {/* Status table */}
+                    <div className="dash-card">
+                      <div className="dash-card-title">Status Atual por Teste</div>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead>
+                            <tr style={{borderBottom:"1px solid var(--border)",background:"var(--surface-alt)"}}>
+                              {["Teste","Área","Última Exec.","Resultado","Achados","Flagged (período)"].map(h=>(
+                                <th key={h} style={{padding:"9px 13px",textAlign:["Achados","Flagged (período)"].includes(h)?"right":"left",fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(dash?.by_test_status||[]).length===0
+                              ? <tr><td colSpan={6} style={{padding:"32px",textAlign:"center",color:"var(--text-subtle)",fontSize:13}}>Sem dados no período</td></tr>
+                              : (dash?.by_test_status||[]).map((t,i)=>(
+                                <tr key={i} style={{borderBottom:"1px solid var(--border)",cursor:"default"}}
+                                  onMouseEnter={e=>e.currentTarget.style.background="var(--surface-alt)"}
+                                  onMouseLeave={e=>e.currentTarget.style.background=""}>
+                                  <td style={{padding:"10px 13px",fontWeight:600,fontSize:13}}>{t.test_name}</td>
+                                  <td style={{padding:"10px 13px",fontSize:12.5,color:"var(--text-muted)"}}>{t.responsible_area||"—"}</td>
+                                  <td style={{padding:"10px 13px",fontFamily:"var(--mono)",fontSize:11.5,color:"var(--text-muted)"}}>{t.last_run?fmt(t.last_run):"—"}</td>
+                                  <td style={{padding:"10px 13px"}}><ResultBadge r={t.last_result}/></td>
+                                  <td style={{padding:"10px 13px",textAlign:"right",fontFamily:"var(--mono)",fontWeight:600,color:(t.last_incidents||0)>0?"var(--danger)":"var(--success)"}}>{t.last_incidents??0}</td>
+                                  <td style={{padding:"10px 13px",textAlign:"right"}}>
+                                    {(t.flagged_runs||0)>0
+                                      ? <span className="badge badge-flagged">{t.flagged_runs}</span>
+                                      : <span style={{color:"var(--text-subtle)",fontSize:12}}>—</span>
+                                    }
+                                  </td>
+                                </tr>
+                              ))
+                            }
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* ── Custom view tab ── */}
+                {(()=>{
+                  const m = dashTab.match(/^view:(.+)$/);
+                  if (!m) return null;
+                  const viewId = m[1];
+                  const view   = views.find(v => v.view_id === viewId);
+                  if (!view) return null;
+                  return <ViewPage key={viewId} view={view} tests={tests}/>;
+                })()}
+          </div>
+
+          {/* Open entries — only shown on non-custom tabs */}
+          {!dashTab.startsWith("view:") && dash?.tests_with_open_entries?.length>0&&(
+            <div className="dash-card">
+              <div className="dash-card-title">⚠️ Testes com Apontamentos em Aberto</div>
+              <table className="open-entries-table">
+                <thead><tr><th style={{padding:"6px 10px",textAlign:"left",fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>Teste</th><th style={{padding:"6px 10px",textAlign:"left",fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>Área</th><th style={{padding:"6px 10px",textAlign:"left",fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>Risco</th><th style={{padding:"6px 10px",textAlign:"right",fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>Em Aberto</th></tr></thead>
+                <tbody>
+                  {dash.tests_with_open_entries.map((r,i)=>(
+                    <tr key={i}>
+                      <td className="cell-name">{r.test_name}</td>
+                      <td style={{fontSize:12.5,color:"var(--text-muted)"}}>{r.responsible_area}</td>
+                      <td className="cell-mono">{r.risco_id}</td>
+                      <td style={{textAlign:"right"}}><span className="badge badge-flagged">{r.open_entries}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ViewNameModal — create new view or rename existing */}
+      {viewModal !== null && (
+        <ViewNameModal
+          initialTitle={viewModal === "new" ? "" : viewModal.title}
+          isRename={viewModal !== "new"}
+          onClose={()=>setViewModal(null)}
+          onSave={async title => {
+            if (viewModal === "new") {
+              const r = await api.createDashView({title});
+              await api.getDashViews().then(vs => {
+                const fresh = Array.isArray(vs) ? vs : [];
+                setViews(fresh);
+                const created = fresh.find(v => v.view_id === r.view_id);
+                if (created) setDashTab(`view:${created.view_id}`);
+              }).catch(()=>{});
+            } else {
+              await api.updateDashView(viewModal.view_id, {title});
+              loadViews();
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+function App() {
+  const [user, setUser]       = useState(null);
+  const [tests, setTests]     = useState([]);
+  const [stats, setStats]     = useState({active:0,paused:0,under_review:0,cleared:0,flagged:0,error:0,by_alert:{}});
+  const [statsView, setStatsView] = useState("current");  // 'current' | '30d'
+  const [risks, setRisks]     = useState([]);
+  const [areas, setAreas]     = useState([]);
+  const [loading, setLoad]    = useState(true);
+  const [page, setPage]       = useState("tests");
+  const [collapsed, setCol]   = useState(false);
+  const [editor, setEditor]   = useState(null);
+  const [detail, setDetail]   = useState(null);
+  const [saving, setSaving]   = useState(false);
+  const [toasts, setToasts]   = useState([]);
+  const [lastRef,  setLastRef]  = useState(null);
+  const [running,       setRunning]       = useState(false);
+  const [orchConfigured, setOrchConfigured] = useState(false);
+
+  const toast = useCallback((msg,type="success")=>{
+    const id=Date.now();
+    setToasts(p=>[...p,{id,msg,type}]);
+    setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)),3500);
+  },[]);
+
+  async function loadAll() {
+    setLoad(true);
+    try {
+      // Run independently so a stats failure doesn't blank the tests list
+      const testsP = api.listTests().catch(e => { toast("Erro ao carregar testes: " + e.message, "error"); return []; });
+      const statsP = api.getStats().catch(() => ({active:0,paused:0,under_review:0,cleared:0,flagged:0,error:0}));
+      const [t, s] = await Promise.all([testsP, statsP]);
+      setTests(Array.isArray(t) ? t : []);
+      setStats(s);
+      setLastRef(new Date());
+    } catch(e) {
+      toast(e.message.includes("timeout") ? "Warehouse iniciando, tente novamente" : "Erro: " + e.message, "error");
+    } finally { setLoad(false); }
+  }
+
+  useEffect(()=>{
+    api.getUser().then(setUser).catch(()=>{});
+    req("GET", "/run-orchestrator").then(r => setOrchConfigured(r?.configured === true)).catch(()=>{});
+    api.getRisks().then(r => {
+      if (r?.error) {
+        console.error("Risks API error:", r.error);
+        setRisks({ error: r.error, data: [] });
+      } else {
+        setRisks(r);
+      }
+    }).catch(e => setRisks({ error: e.message, data: [] }));
+    api.getAreas().then(r => {
+      if (r?.error) {
+        console.error("Areas API error:", r.error);
+        setAreas({ error: r.error, data: [] });
+      } else {
+        setAreas(r);
+      }
+    }).catch(e => setAreas({ error: e.message, data: [] }));
+    loadAll();
+  },[]);
+
+  async function handleSave(form, submit) {
+    setSaving(true);
+    try {
+      form.test_id
+        ? await api.editTest(form.test_id, form, submit)
+        : await api.createTest(form, submit);
+      // Close modal immediately on success, then reload in background
+      setEditor(null);
+      toast(submit
+        ? `"${form.test_name}" submetido para revisão ✓`
+        : `"${form.test_name}" salvo como rascunho`
+      );
+      loadAll(); // intentionally not awaited — modal already closed
+    } catch(e) {
+      toast(e.message || "Erro ao salvar teste", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRunOrchestrator() {
+    setRunning(true);
+    try {
+      const res = await req("POST", "/run-orchestrator");
+      if (res.status === "not_configured") {
+        toast("⚙️ " + res.message, "error");
+      } else {
+        toast(`▶ Orquestrador disparado — Run ID: ${res.run_id}`);
+      }
+    } catch(e) {
+      toast("Erro ao disparar: " + e.message, "error");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function doAction(fn, msg) {
+    try {
+      await fn();
+      await loadAll();  // reload first so UI shows updated data
+      toast(msg);
+    } catch(e) {
+      toast(e.message || "Erro inesperado", "error");
+    }
+  }
+
+  const reviewCount = tests.filter(t=>["UNDER_REVIEW","PENDING_DELETE"].includes(t.status)).length;
+
+  const STATS = [
+    {key:"active",  label:"Ativos",          cls:"c-indigo"},
+    {key:"paused",  label:"Pausados",         cls:"c-slate"},
+    {key:"cleared", label:"Cleared (30d)",    cls:"c-emerald", sub:"sem materialização"},
+    {key:"flagged", label:"Flagged (30d)",    cls:"c-rose",    sub:"risco materializado"},
+    {key:"error",   label:"Errors (30d)",     cls:"c-orange",  sub:"falha de execução"},
+  ];
+
+  const NAV = [
+    {id:"tests",  icon:"⊞", label:"Testes"},
+    {id:"review", icon:"◉", label:"Revisão", badge: reviewCount||null},
+    {id:"fp",     icon:"⚑", label:"Falsos Positivos"},
+    {id:"dash",   icon:"◈", label:"Dashboard"},
+  ];
+
+  return (
+    <>
+      <div className="app">
+        <aside className={`sidebar${collapsed?" collapsed":""}`}>
+          <div className="sidebar-top">
+            <button className="hamburger" onClick={()=>setCol(c=>!c)} title={collapsed?"Expandir menu":"Recolher menu"}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+              </svg>
+            </button>
+            <div className="brand-text">
+              <div className="brand-title">Auditoria Contínua</div>
+            </div>
+          </div>
+
+          <nav className="nav">
+            {NAV.map(n=>(
+              <button key={n.id} className={`nav-item${page===n.id?" active":""}`} onClick={()=>setPage(n.id)} title={collapsed?n.label:""}>
+                <span className="nav-icon">{n.icon}</span>
+                <span className="nav-label">{n.label}</span>
+                {n.badge&&<span className="nav-badge">{n.badge}</span>}
+              </button>
+            ))}
+          </nav>
+
+          <div className="sidebar-footer">
+            {user&&<div className="user-pill"><div className="user-email">{user.email}</div></div>}
+          </div>
+        </aside>
+
+        <main className="main">
+          <div className="topbar">
+            <div className="topbar-title">{page==="tests"?"Testes de Auditoria":page==="review"?"Fila de Revisão":page==="fp"?"Falsos Positivos":"Dashboard"}</div>
+            {lastRef&&<span className="topbar-meta">atualizado às {lastRef.toLocaleTimeString("pt-BR",{timeStyle:"short"})}</span>}
+            <button className="btn btn-ghost btn-sm" onClick={loadAll} disabled={loading}>{loading?"⏳":"⟳"} Atualizar</button>
+            {page==="tests"&&<button className="btn btn-ghost btn-sm" onClick={handleRunOrchestrator}
+              disabled={running||!orchConfigured}
+              title={orchConfigured?"Dispara o job do orquestrador no Databricks":"Configure ORCHESTRATOR_JOB_ID em app.yaml para habilitar"}
+              style={!orchConfigured?{opacity:0.4,cursor:"not-allowed"}:{}}>
+              {running?"⏳ Disparando…":"▶ Executar Testes"}
+            </button>}
+            {page==="tests"&&<button className="btn btn-primary" onClick={()=>setEditor({})}>+ Novo Teste</button>}
+          </div>
+
+          <div className="content">
+            {page==="tests"&&(
+              <>
+                {/* Stats cards with toggle — statsView state lives in App */}
+                {(()=>{
+                  const ba = stats.by_alert || {};
+                  const total30 = (stats.cleared||0)+(stats.flagged||0)+(stats.error||0);
+                  const CURRENT_CARDS = [
+                    {key:"sem_achados",  label:"Sem Achados",       icon:"✅", cls:"c-emerald", sub:"testes regulares"},
+                    {key:"novo_achado",  label:"Novo Achado",        icon:"🆕", cls:"c-rose",    sub:"primeira materialização"},
+                    {key:"persistente",  label:"Achado Persistente", icon:"🔁", cls:"c-orange",  sub:"sem resolução intermediária"},
+                    {key:"reincidente",  label:"Risco Reincidente",  icon:"⚠️", cls:"c-rose",    sub:"voltou após resolução"},
+                    {key:"em_tratamento",label:"Em Tratamento",      icon:"🔕", cls:"c-amber",   sub:"apontamento aberto"},
+                    {key:"erro",         label:"Erro",               icon:"❌", cls:"c-slate",   sub:"falha de execução"},
+                  ];
+                  return (
+                    <div style={{marginBottom:22}}>
+                      {/* Toggle header */}
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                        <div style={{flex:1,height:1,background:"var(--border)"}}/>
+                        <div style={{display:"flex",border:"1px solid var(--border)",borderRadius:"var(--rs)",overflow:"hidden"}}>
+                          <button onClick={()=>setStatsView("current")}
+                            style={{padding:"4px 14px",border:"none",fontSize:11,fontFamily:"var(--mono)",cursor:"pointer",
+                              background:statsView==="current"?"var(--primary)":"transparent",
+                              color:statsView==="current"?"#fff":"var(--text-muted)"}}>
+                            Estado Atual
+                          </button>
+                          <button onClick={()=>setStatsView("30d")}
+                            style={{padding:"4px 14px",border:"none",fontSize:11,fontFamily:"var(--mono)",cursor:"pointer",
+                              background:statsView==="30d"?"var(--primary)":"transparent",
+                              color:statsView==="30d"?"#fff":"var(--text-muted)"}}>
+                            30 dias
+                          </button>
+                        </div>
+                      </div>
+
+                      {statsView==="current" ? (
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10}}>
+                          {CURRENT_CARDS.map(c=>(
+                            <div key={c.key} className={`stat-card ${c.cls}`}>
+                              <div className="stat-label" style={{fontSize:9}}>{c.icon} {c.label}</div>
+                              <div className="stat-val">{ba[c.key]??0}</div>
+                              <div className="stat-sub">{c.sub}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+                          <div className="stat-card c-emerald">
+                            <div className="stat-label">Sem Achados</div>
+                            <div className="stat-val">{stats.cleared??0}</div>
+                            <div className="stat-sub">{total30>0?`${stats.cleared??0} de ${total30} execuções`:"sem materialização"}</div>
+                          </div>
+                          <div className="stat-card c-rose">
+                            <div className="stat-label">Com Achados</div>
+                            <div className="stat-val">{stats.flagged??0}</div>
+                            <div className="stat-sub">{total30>0?<><strong style={{color:"var(--danger)"}}>{stats.flagged??0} de {total30}</strong> execuções</>:"risco materializado"}</div>
+                          </div>
+                          <div className="stat-card c-orange">
+                            <div className="stat-label">Erros</div>
+                            <div className="stat-val">{stats.error??0}</div>
+                            <div className="stat-sub">{total30>0?`${stats.error??0} de ${total30} execuções`:"falha de execução"}</div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                <TestList tests={tests} loading={loading} onSelect={setDetail} onNew={()=>setEditor({})}/>
+              </>
+            )}
+            {page==="review"&&<ReviewQueue tests={tests} user={user} loading={loading} onApprove={t=>doAction(()=>api.approve(t.test_id),`"${t.test_name}" aprovado ✓`)} onReject={(t,r)=>doAction(()=>api.reject(t.test_id,r),`"${t.test_name}" rejeitado`)}/>}
+            {page==="fp"&&<FalsePositivesPage onOpenTest={testId=>{
+              const t = tests.find(x=>x.test_id===testId);
+              if (t) { setPage("tests"); setDetail(t); }
+            }}/>}
+            {page==="dash"&&<Dashboard tests={tests} areas={areas}/>}
+          </div>
+        </main>
+      </div>
+
+      {editor!==null&&<TestEditor test={editor?.test_id?editor:null} risks={risks} areas={areas} onClose={()=>setEditor(null)} onSave={handleSave} saving={saving}/>}
+
+      {detail&&<TestDetail test={detail} user={user} onClose={()=>setDetail(null)} onEdit={t=>{setDetail(null);setEditor(t);}} onPause={t=>doAction(()=>api.pause(t.test_id),`"${t.test_name}" pausado`)} onActivate={t=>doAction(()=>api.activate(t.test_id),`"${t.test_name}" reativado ✓`)} onRequestDelete={(t,reason)=>doAction(()=>api.requestDelete(t.test_id,reason),`Solicitação de exclusão enviada para revisão`)}/>}
+
+      <Toasts toasts={toasts}/>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
