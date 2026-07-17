@@ -649,7 +649,6 @@ WHERE
   AND datediff(DueDate_parsed, RegistryDate_parsed) < 0 -- Due_date antes de Registry_date (problema)
   AND RegistryDate_parsed > to_date('2025-12-10')
 
-ORDER BY Days_Due_minus_Registry ASC, RegistryDate_parsed DESC
 
 """)
 ```
@@ -726,7 +725,6 @@ WHERE
   AND DueDate_parsed IS NOT NULL
   AND datediff(DueDate_parsed, RegistryDate_parsed) < 0 -- Due_date antes de Registry_date (problema)
   AND RegistryDate_parsed <= DATE('2025-12-10')
-ORDER BY Days_Due_minus_Registry ASC, RegistryDate_parsed DESC
 
 """)
 ```
@@ -804,7 +802,6 @@ WHERE
   AND datediff(DueDate_parsed, RegistryDate_parsed) < 0 -- Due_date antes de Registry_date (problema)
   AND RegistryDate_parsed > to_date('2025-12-10')
 
-ORDER BY Days_Due_minus_Registry ASC, RegistryDate_parsed DESC
 
 """)
 ```
@@ -881,7 +878,6 @@ WHERE
   AND DueDate_parsed IS NOT NULL
   AND datediff(DueDate_parsed, RegistryDate_parsed) < 0 -- Due_date antes de Registry_date (problema)
   AND RegistryDate_parsed <= DATE('2025-12-10')
-ORDER BY Days_Due_minus_Registry ASC, RegistryDate_parsed DESC
 
 """)
 ```
