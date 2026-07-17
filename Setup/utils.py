@@ -24,6 +24,7 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
 from datetime import datetime
+from functools import reduce   # disponível no escopo dos testes migrados do V1
 import hashlib
 import json
 import os
