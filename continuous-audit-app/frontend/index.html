@@ -267,6 +267,27 @@
 <script type="text/babel">
 const { useState, useEffect, useCallback, useRef } = React;
 
+// ── Shared hooks ─────────────────────────────────────────────────────────────
+// Close a modal on Escape (#5)
+function useEscToClose(onClose) {
+  useEffect(() => {
+    const fn = e => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", fn);
+    return () => document.removeEventListener("keydown", fn);
+  }, [onClose]);
+}
+// useState backed by localStorage (#8)
+function usePersistedState(key, initial) {
+  const [val, setVal] = useState(() => {
+    try { const s = localStorage.getItem(key); return s !== null ? JSON.parse(s) : initial; }
+    catch(e) { return initial; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
+  }, [key, val]);
+  return [val, setVal];
+}
+
 // ── API ──────────────────────────────────────────────────────────────────────
 async function req(method, path, body) {
   const c = new AbortController(), t = setTimeout(() => c.abort(), 35000);
@@ -388,11 +409,13 @@ const PALETTE_META = [
 ];
 
 // ── Toast ────────────────────────────────────────────────────────────────────
-const Toasts = ({toasts}) => (
+const Toasts = ({toasts, onDismiss}) => (
   <div className="toast-wrap">
     {toasts.map(t=>(
       <div key={t.id} className={`toast ${t.type}`}>
-        {t.type==="success"?"✅":t.type==="error"?"❌":"⚠️"} {t.msg}
+        <span style={{flex:1}}>{t.type==="success"?"✅":t.type==="error"?"❌":"⚠️"} {t.msg}</span>
+        <button onClick={()=>onDismiss&&onDismiss(t.id)} title="Fechar"
+          style={{border:"none",background:"none",cursor:"pointer",color:"var(--text-subtle)",fontSize:14,lineHeight:1,padding:"0 0 0 8px"}}>✕</button>
       </div>
     ))}
   </div>
@@ -538,6 +561,7 @@ function validateForm(form) {
 }
 
 function TestEditor({test, risks, areas, onClose, onSave, saving}) {
+  useEscToClose(onClose);
   const isEdit = !!test?.test_id;
   const initSuffix = isEdit ? (test.output_table||"").replace(/^tb_incidents_/,"") : "";
   const [form, setForm]       = useState(isEdit ? {...test, output_table_suffix:initSuffix} : {...EMPTY});
@@ -967,6 +991,7 @@ function AchadosTab({testId, testName, toast=()=>{}}) {
 
 // ── FPMarkModal ────────────────────────────────────────────────────────────────
 function FPMarkModal({row, columns, onConfirm, onClose}) {
+  useEscToClose(onClose);
   const [selected, setSelected] = useState([]);   // column names, max 3
   const [note,     setNote]     = useState("");
 
@@ -1072,6 +1097,7 @@ function FPMarkModal({row, columns, onConfirm, onClose}) {
 
 // ── FPUnmarkConfirm ────────────────────────────────────────────────────────────
 function FPUnmarkConfirm({onConfirm, onClose}) {
+  useEscToClose(onClose);
   return (
     <div className="overlay" style={{zIndex:300}} onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal" style={{width:400}}>
@@ -1096,6 +1122,7 @@ function FPUnmarkConfirm({onConfirm, onClose}) {
 
 // ── AchadosModal ──────────────────────────────────────────────────────────────
 function AchadosModal({testId, testName, execDates, onClose, toast=()=>{}}) {
+  useEscToClose(onClose);
   const [dateSel,  setDateSel]  = useState("latest");  // "latest" | "all" | "<YYYY-MM-DD>"
   const [dateFrom, setDateFrom] = useState("");        // custom range — overrides dateSel when set
   const [dateTo,   setDateTo]   = useState("");
@@ -1541,6 +1568,7 @@ function SuppressionTab({testId, testName, toast=()=>{}}) {
 
 // ── TestDetail ────────────────────────────────────────────────────────────────
 function TestDetail({test, user, onClose, onEdit, onPause, onActivate, onRequestDelete, toast=()=>{}}) {
+  useEscToClose(onClose);
   const [tab, setTab]       = useState("info");
   const [history, setHist]  = useState(null);  // null = not loaded
   const [execs, setExecs]   = useState(null);
@@ -1663,6 +1691,7 @@ function TestDetail({test, user, onClose, onEdit, onPause, onActivate, onRequest
 
 // ── ConfirmDeleteDialog ──────────────────────────────────────────────────────
 function ConfirmDeleteDialog({test, onConfirm, onCancel}) {
+  useEscToClose(onCancel);
   const [reason, setReason] = useState("");
   const needsApproval = ["ACTIVE","PAUSED"].includes(test.status);
 
@@ -2280,7 +2309,7 @@ function MultiStatusSelect({selected, onChange}) {
 // ── TestList ──────────────────────────────────────────────────────────────────
 function TestList({tests, loading, onSelect, onNew}) {
   const [search,   setSearch]   = useState("");
-  const [statuses, setStatuses] = useState(["ACTIVE","PAUSED","UNDER_REVIEW","DRAFT","REJECTED"]);
+  const [statuses, setStatuses] = usePersistedState("ca.testFilter", ["ACTIVE","PAUSED","UNDER_REVIEW","DRAFT","REJECTED"]);
   const filtered = tests.filter(t=>{
     const q=search.toLowerCase();
     const ms=(t.test_name||"").toLowerCase().includes(q)||(t.responsible_area||"").toLowerCase().includes(q)||(t.category||"").toLowerCase().includes(q);
@@ -2467,6 +2496,8 @@ function ChartCard({chart, isFirst, isLast, onEdit, onDelete, onMove}) {
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
+  const [visible, setVisible] = useState(false);
+  const cardRef = useRef();
 
   function load() {
     setLoading(true); setError(null);
@@ -2475,13 +2506,25 @@ function ChartCard({chart, isFirst, isLast, onEdit, onDelete, onMove}) {
       .catch(e => { setError(e.message || "Erro ao carregar gráfico"); setLoading(false); });
   }
 
-  useEffect(() => { load(); }, [chart.chart_id, chart.updated_at]);
+  // Only fetch when the card scrolls into view (#4) — a view with many charts
+  // no longer fires every request at once.
+  useEffect(() => {
+    if (visible || !cardRef.current) return;
+    if (typeof IntersectionObserver === "undefined") { setVisible(true); return; }
+    const obs = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) { setVisible(true); obs.disconnect(); }
+    }, { rootMargin: "200px" });
+    obs.observe(cardRef.current);
+    return () => obs.disconnect();
+  }, [visible]);
+
+  useEffect(() => { if (visible) load(); }, [visible, chart.chart_id, chart.updated_at]);
 
   const isFull   = chart.width === "full";
   const colors   = PALETTE_COLORS[(data?.palette) || "blue"] || PALETTE_COLORS.blue;
 
   return (
-    <div className="dash-card" style={{gridColumn: isFull ? "span 2" : "span 1", minHeight:200}}>
+    <div ref={cardRef} className="dash-card" style={{gridColumn: isFull ? "span 2" : "span 1", minHeight:200}}>
       {/* Header row */}
       <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:10}}>
         <span style={{flex:1,fontSize:13,fontWeight:600,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{chart.title}</span>
@@ -2523,6 +2566,7 @@ function ChartCard({chart, isFirst, isLast, onEdit, onDelete, onMove}) {
 // ── ViewPage ──────────────────────────────────────────────────────────────────
 // ── ConfirmModal — reusable confirmation dialog (matches app styling) ─────────
 function ConfirmModal({title, message, confirmLabel="Excluir", danger=true, onConfirm, onClose}) {
+  useEscToClose(onClose);
   return (
     <div className="overlay" style={{zIndex:300}} onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal" style={{width:420}}>
@@ -2630,6 +2674,7 @@ function ViewPage({view, tests, toast=()=>{}}) {
 
 // ── ViewNameModal — create / rename a view (page) ─────────────────────────────
 function ViewNameModal({initialTitle, isRename, onClose, onSave}) {
+  useEscToClose(onClose);
   const [title,  setTitle]  = useState(initialTitle || "");
   const [saving, setSaving] = useState(false);
   const [err,    setErr]    = useState("");
@@ -2682,6 +2727,7 @@ function ViewNameModal({initialTitle, isRename, onClose, onSave}) {
 
 // ── ChartEditorModal — add / edit a chart widget ──────────────────────────────
 function ChartEditorModal({tests, chart, onClose, onSave}) {
+  useEscToClose(onClose);
   // chart=null → adding new; chart=object → editing existing
   const cfg = chart ? (typeof chart.config === "string" ? JSON.parse(chart.config || "{}") : (chart.config || {})) : {};
 
@@ -2913,7 +2959,7 @@ function Dashboard({tests, areas, toast=()=>{}}) {
   const [filters, setFilters] = useState({date_from:"",date_to:"",result:"",area:"",test_name:"",notify:""});
   const [dash, setDash]       = useState(null);
   const [loading, setLoad]    = useState(true);
-  const [dashTab, setDashTab] = useState("execucoes");
+  const [dashTab, setDashTab] = usePersistedState("ca.dashTab", "execucoes");
   const [views, setViews]     = useState([]);
   // viewModal: null | "new" | {mode:"rename", view_id, title}
   const [viewModal, setViewModal] = useState(null);
@@ -3273,12 +3319,12 @@ function App() {
   const [user, setUser]       = useState(null);
   const [tests, setTests]     = useState([]);
   const [stats, setStats]     = useState({active:0,paused:0,under_review:0,cleared:0,flagged:0,error:0,by_alert:{}});
-  const [statsView, setStatsView] = useState("current");  // 'current' | '30d'
+  const [statsView, setStatsView] = usePersistedState("ca.statsView", "current");  // 'current' | '30d'
   const [risks, setRisks]     = useState([]);
   const [areas, setAreas]     = useState([]);
   const [loading, setLoad]    = useState(true);
   const [page, setPage]       = useState("tests");
-  const [collapsed, setCol]   = useState(false);
+  const [collapsed, setCol]   = usePersistedState("ca.sidebar", false);
   const [editor, setEditor]   = useState(null);
   const [detail, setDetail]   = useState(null);
   const [saving, setSaving]   = useState(false);
@@ -3287,10 +3333,12 @@ function App() {
   const [running,       setRunning]       = useState(false);
   const [orchConfigured, setOrchConfigured] = useState(false);
 
+  const dismissToast = useCallback(id=>setToasts(p=>p.filter(t=>t.id!==id)),[]);
   const toast = useCallback((msg,type="success")=>{
-    const id=Date.now();
+    const id=Date.now()+Math.random();
     setToasts(p=>[...p,{id,msg,type}]);
-    setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)),3500);
+    // Errors linger longer (8s) so they can be read; others are ephemeral (3.5s). (#7)
+    setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)), type==="error"?8000:3500);
   },[]);
 
   async function loadAll() {
@@ -3522,7 +3570,7 @@ function App() {
 
       {detail&&<TestDetail test={detail} user={user} toast={toast} onClose={()=>setDetail(null)} onEdit={t=>{setDetail(null);setEditor(t);}} onPause={t=>doAction(()=>api.pause(t.test_id),`"${t.test_name}" pausado`)} onActivate={t=>doAction(()=>api.activate(t.test_id),`"${t.test_name}" reativado ✓`)} onRequestDelete={(t,reason)=>doAction(()=>api.requestDelete(t.test_id,reason),`Solicitação de exclusão enviada para revisão`)}/>}
 
-      <Toasts toasts={toasts}/>
+      <Toasts toasts={toasts} onDismiss={dismissToast}/>
     </>
   );
 }

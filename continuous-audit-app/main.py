@@ -3,6 +3,7 @@ import ast
 import json
 import os
 import re
+import time
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -10,6 +11,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 import db
 import validation
@@ -52,6 +54,36 @@ VALID_WIDTHS      = {"half", "full"}
 _COL_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 
 app = FastAPI(title="Continuous Audit V2", docs_url="/api/docs")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DB session middleware — reuse ONE warehouse connection per /api request (#1).
+# Pure-ASGI (not BaseHTTPMiddleware) so the contextvar it sets propagates to the
+# route handler. The connection is opened lazily on first query, so requests
+# that don't touch the DB (static/frontend) never open one.
+# ─────────────────────────────────────────────────────────────────────────────
+class DBSessionMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or not scope.get("path", "").startswith("/api/"):
+            await self.app(scope, receive, send)
+            return
+        holder = {"conn": None}
+        token = db._request_db.set(holder)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            db._request_db.reset(token)
+            if holder["conn"] is not None:
+                try:
+                    await run_in_threadpool(holder["conn"].close)
+                except Exception:
+                    pass
+
+
+app.add_middleware(DBSessionMiddleware)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +240,23 @@ def _safe_fallback(fn):
         return []
 
 
+# Small in-process TTL cache for reference data that rarely changes (#3).
+_REF_CACHE_TTL = 300  # seconds — bump/lower here if needed
+_ref_cache: dict = {}
+
+
+def _cached(key: str, fn):
+    """Return a cached value if fresh; otherwise compute, cache (only on success) and return."""
+    now = time.time()
+    hit = _ref_cache.get(key)
+    if hit and hit[1] > now:
+        return hit[0]
+    val = fn()
+    if isinstance(val, list):  # never cache an {"error": ...} payload
+        _ref_cache[key] = (val, now + _REF_CACHE_TTL)
+    return val
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Routes — user
 # ─────────────────────────────────────────────────────────────────────────────
@@ -244,18 +293,22 @@ def health(user: User = Depends(get_user)):
 
 @app.get("/api/risks")
 def list_risks(user: User = Depends(get_user)):
-    try:
-        return db.query(f"SELECT RiskId, RiskTitle FROM {T_RISKS} ORDER BY RiskId")
-    except Exception as e:
-        return {"error": f"[{T_RISKS}] {str(e)}", "data": []}
+    def _load():
+        try:
+            return db.query(f"SELECT RiskId, RiskTitle FROM {T_RISKS} ORDER BY RiskId")
+        except Exception as e:
+            return {"error": f"[{T_RISKS}] {str(e)}", "data": []}
+    return _cached("risks", _load)
 
 
 @app.get("/api/areas")
 def list_areas(user: User = Depends(get_user)):
-    try:
-        return db.query(f"SELECT DISTINCT Area FROM {T_AREAS} WHERE Area IS NOT NULL ORDER BY Area")
-    except Exception as e:
-        return {"error": f"[{T_AREAS}] {str(e)}", "data": []}
+    def _load():
+        try:
+            return db.query(f"SELECT DISTINCT Area FROM {T_AREAS} WHERE Area IS NOT NULL ORDER BY Area")
+        except Exception as e:
+            return {"error": f"[{T_AREAS}] {str(e)}", "data": []}
+    return _cached("areas", _load)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -359,18 +412,35 @@ def get_dashboard(
         cfg_filters.append("c.should_activate_channel = false")
     cfg_where = " AND ".join(cfg_filters)
 
-    # Coverage KPIs (current snapshot) — respect the config filters (area/test/notify)
-    # but not the date range, since they describe the current active portfolio.
-    total_tests = db.query(f"SELECT COUNT(*) AS cnt FROM {T_CFG} c WHERE c.status='ACTIVE' AND {cfg_where}", cfg_params)[0]["cnt"]
-    risks_covered = db.query(f"SELECT COUNT(DISTINCT c.risco_id) AS cnt FROM {T_CFG} c WHERE c.status='ACTIVE' AND c.risco_id IS NOT NULL AND c.risco_id != 'N/A' AND {cfg_where}", cfg_params)[0]["cnt"]
-    areas_covered = db.query(f"SELECT COUNT(DISTINCT c.responsible_area) AS cnt FROM {T_CFG} c WHERE c.status='ACTIVE' AND c.responsible_area IS NOT NULL AND {cfg_where}", cfg_params)[0]["cnt"]
+    # Coverage KPIs (current snapshot) — one query, conditional COUNT DISTINCT (#2).
+    # Respect the config filters (area/test/notify) but not the date range.
+    _cov = db.query(f"""
+        SELECT
+            COUNT(*) AS total_tests,
+            COUNT(DISTINCT CASE WHEN c.risco_id IS NOT NULL AND c.risco_id != 'N/A' THEN c.risco_id END) AS risks_covered,
+            COUNT(DISTINCT CASE WHEN c.responsible_area IS NOT NULL THEN c.responsible_area END) AS areas_covered
+        FROM {T_CFG} c WHERE c.status='ACTIVE' AND {cfg_where}
+    """, cfg_params)[0]
+    total_tests   = _cov["total_tests"]
+    risks_covered = _cov["risks_covered"]
+    areas_covered = _cov["areas_covered"]
 
-    # Execution KPIs — join config so area/test/notify filters apply to runs too.
+    # Execution KPIs — one query with conditional aggregation (#2). Joins config so
+    # area/test/notify filters apply to runs too.
     _runs_from   = f"FROM {T_EXEC} e JOIN {T_CFG} c ON c.test_name = e.TestName"
     _runs_params = {**exec_params, **cfg_params}
-    runs_total   = db.query(f"SELECT COUNT(*) AS cnt {_runs_from} WHERE {exec_where} AND {cfg_where}", _runs_params)[0]["cnt"]
-    runs_cleared = db.query(f"SELECT COUNT(*) AS cnt {_runs_from} WHERE e.TestResult='PASSED' AND {exec_where} AND {cfg_where}", _runs_params)[0]["cnt"]
-    runs_flagged = db.query(f"SELECT COUNT(*) AS cnt {_runs_from} WHERE e.TestResult='FAILED' AND {exec_where} AND {cfg_where}", _runs_params)[0]["cnt"]
+    _rc = db.query(f"""
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN e.TestResult='PASSED' THEN 1 ELSE 0 END) AS cleared,
+            SUM(CASE WHEN e.TestResult='FAILED' THEN 1 ELSE 0 END) AS flagged,
+            SUM(CASE WHEN e.TestResult='ERROR'  THEN 1 ELSE 0 END) AS error
+        {_runs_from} WHERE {exec_where} AND {cfg_where}
+    """, _runs_params)[0]
+    runs_total   = _rc["total"]   or 0
+    runs_cleared = _rc["cleared"] or 0
+    runs_flagged = _rc["flagged"] or 0
+    runs_error   = _rc["error"]   or 0
 
     # By area
     by_area = db.query(f"""
@@ -410,8 +480,7 @@ def get_dashboard(
         LIMIT 20
     """))
 
-    # Run errors count
-    runs_error = db.query(f"SELECT COUNT(*) AS cnt {_runs_from} WHERE e.TestResult='ERROR' AND {exec_where} AND {cfg_where}", _runs_params)[0]["cnt"]
+    # (runs_error is now computed together with the other run counts above — #2)
 
     # Test-centric view: last result per active test
     by_test_status = db.query(f"""
@@ -714,19 +783,39 @@ def get_incidents(
     test = _require_test(test_id)
     table = _safe_table_name(test["output_table"])
     full_table = f"{CATALOG}.{SCHEMA}.{table}"
+    search = (search or "").strip()
     try:
-        # Build date filter
+        # ── Date filter (parameterized) ──────────────────────────────────────────
+        params: dict = {}
         if all_dates:
             date_filter = "1=1"
         elif date_from and date_to:
-            date_filter = f"DATE(ArchiveDate) BETWEEN '{date_from}' AND '{date_to}'"
+            date_filter = "DATE(ArchiveDate) BETWEEN %(date_from)s AND %(date_to)s"
+            params["date_from"] = date_from; params["date_to"] = date_to
         elif date_from:
-            date_filter = f"DATE(ArchiveDate) >= '{date_from}'"
+            date_filter = "DATE(ArchiveDate) >= %(date_from)s"; params["date_from"] = date_from
         elif date_to:
-            date_filter = f"DATE(ArchiveDate) <= '{date_to}'"
+            date_filter = "DATE(ArchiveDate) <= %(date_to)s"; params["date_to"] = date_to
+        elif search:
+            # Searching with no explicit range → look across the whole history (#10)
+            date_filter = "1=1"
         else:
             # Default: latest execution date
             date_filter = f"DATE(ArchiveDate) = (SELECT DATE(MAX(ArchiveDate)) FROM {full_table})"
+
+        # ── Server-side free-text search across business columns (#10) ───────────
+        search_where = ""
+        if search:
+            try:
+                probe = db.query(f"SELECT * FROM {full_table} LIMIT 1")
+                scols = [c for c in (probe[0].keys() if probe else [])
+                         if c != "ArchiveDate" and not c.startswith("_")]
+            except Exception:
+                scols = []
+            if scols:
+                concat = "concat_ws(' ', " + ", ".join(f"CAST(`{c}` AS STRING)" for c in scols) + ")"
+                search_where = f"AND lower({concat}) LIKE lower(%(q)s)"
+                params["q"] = f"%{search}%"
 
         # Get available dates for the date picker
         dates = db.query(f"""
@@ -738,10 +827,10 @@ def get_incidents(
 
         rows = db.query(f"""
             SELECT * FROM {full_table}
-            WHERE {date_filter}
+            WHERE {date_filter} {search_where}
             ORDER BY ArchiveDate DESC
             LIMIT {limit}
-        """)
+        """, params)
 
         # Load active FPs (criteria-based, with legacy row_hash fallback)
         try:
@@ -822,6 +911,8 @@ def get_incidents(
             "exec_dates":          [str(d["exec_date"]) for d in dates],
             "is_same_as_previous": is_same,
             "last_hash_meta":      last_meta,
+            "search":              search or None,
+            "limited":             len(rows) >= limit,
         }
     except Exception as e:
         raise HTTPException(400, f"Erro ao consultar achados: {str(e)}")

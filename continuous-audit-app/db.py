@@ -1,5 +1,7 @@
 import os
+import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from databricks import sql
 from databricks.sdk import WorkspaceClient
@@ -9,26 +11,63 @@ WAREHOUSE_ID    = os.getenv("DATABRICKS_WAREHOUSE_ID", "")
 HTTP_PATH       = f"/sql/1.0/warehouses/{WAREHOUSE_ID}"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Auth — the WorkspaceClient is built once and reused. The SDK refreshes the
+# token internally, so we no longer rebuild the client / re-authenticate on
+# every single query (#1).
+# ─────────────────────────────────────────────────────────────────────────────
+_ws_client = None
+_ws_lock   = threading.Lock()
+
+
+def _client() -> WorkspaceClient:
+    global _ws_client
+    if _ws_client is None:
+        with _ws_lock:
+            if _ws_client is None:
+                _ws_client = WorkspaceClient()
+    return _ws_client
+
+
 def _get_token() -> str:
     """
-    Obtém o bearer token via SDK credential chain.
-    Em Databricks Apps, o SDK resolve automaticamente as credenciais
-    da Service Principal via M2M OAuth — sem precisar de DATABRICKS_TOKEN.
-    Em dev local, usa DATABRICKS_TOKEN (PAT) como fallback natural do SDK.
+    Bearer token via SDK credential chain. In Databricks Apps the SDK resolves
+    the Service Principal (M2M OAuth) automatically; in local dev it falls back
+    to DATABRICKS_TOKEN. The client is cached (see _client).
     """
-    w = WorkspaceClient()
-    auth_header = w.config.authenticate().get("Authorization", "")
+    auth_header = _client().config.authenticate().get("Authorization", "")
     return auth_header.replace("Bearer ", "")
 
 
-@contextmanager
-def _conn():
-    conn = sql.connect(
+def _new_connection():
+    return sql.connect(
         server_hostname=DATABRICKS_HOST,
         http_path=HTTP_PATH,
         access_token=_get_token(),
         _socket_timeout=30,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-request connection reuse (#1)
+# A pure-ASGI middleware (in main.py) sets a holder in this contextvar for the
+# duration of an /api request. The first query in that request lazily opens one
+# connection and every later query reuses it; the middleware closes it at the
+# end. Outside a request scope (e.g. startup migrations) each call opens and
+# closes its own connection, exactly like before.
+# ─────────────────────────────────────────────────────────────────────────────
+_request_db: ContextVar = ContextVar("_request_db", default=None)
+
+
+@contextmanager
+def _conn():
+    holder = _request_db.get()
+    if holder is not None:
+        if holder["conn"] is None:
+            holder["conn"] = _new_connection()
+        yield holder["conn"]        # reuse — do NOT close here
+        return
+    conn = _new_connection()
     try:
         yield conn
     finally:
