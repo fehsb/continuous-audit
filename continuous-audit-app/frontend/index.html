@@ -247,6 +247,19 @@
     .open-entries-table td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:12.5px}
     thead.sticky th{position:sticky;top:0;z-index:10}
     .open-entries-table tr:last-child td{border-bottom:none}
+    /* ── Responsive grids ── */
+    .grid-6{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+    .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    @media (max-width:1100px){
+      .stats-grid,.kpi-grid,.grid-6{grid-template-columns:repeat(3,1fr)}
+    }
+    @media (max-width:680px){
+      .stats-grid,.kpi-grid,.grid-6,.grid-3{grid-template-columns:repeat(2,1fr)}
+      .form-grid,.form-grid-3{grid-template-columns:1fr}
+      .dash-grid{grid-template-columns:1fr!important}
+      .content{padding:14px}
+      .modal,.modal-lg,.modal-xl{width:100%}
+    }
   </style>
 </head>
 <body>
@@ -314,11 +327,24 @@ const api = {
 };
 
 // ── Validation ───────────────────────────────────────────────────────────────
-const SQL_BLK = ["DROP","CREATE","INSERT","DELETE","ALTER","UPDATE","TRUNCATE","REPLACE","MERGE","OVERWRITE"];
+// Kept in sync with backend validation.py: SQL uses an allow-list (single SELECT/WITH
+// statement) instead of a substring block-list, so columns like created_at / updated_at
+// and functions like replace() no longer trip false positives.
 const PY_BLK  = ["os.system","subprocess","__import__","open(","eval(","exec(",".write.","saveAsTable","insertInto"];
+function stripSqlComments(code) {
+  return (code||"").replace(/\/\*[\s\S]*?\*\//g," ").replace(/--[^\n]*/g," ");
+}
 function localValidate(type, imp, code) {
-  const src = `${imp||""}\n${code||""}`.toUpperCase();
-  return (type==="SQL"?SQL_BLK:PY_BLK).filter(k=>src.includes(k.toUpperCase()));
+  if (type === "SQL") {
+    const clean = stripSqlComments(code).trim();
+    if (!clean) return [];
+    const issues = [];
+    if (!/^(SELECT|WITH)\b/i.test(clean)) issues.push("A query deve começar com SELECT ou WITH");
+    if (clean.replace(/;+\s*$/,"").includes(";")) issues.push("Apenas uma instrução SELECT é permitida");
+    return issues;
+  }
+  const src = `${imp||""}\n${code||""}`.toLowerCase();
+  return PY_BLK.filter(k=>src.includes(k.toLowerCase()));
 }
 
 // ── Display ──────────────────────────────────────────────────────────────────
@@ -582,6 +608,11 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
         </div>
 
         <div className="modal-body">
+          {isEdit && form.status==="ACTIVE" && (
+            <div className="alert alert-warn" style={{marginBottom:14}}>
+              ⚠️ Este teste está <strong>ativo</strong>. As alterações <strong>não entram no ar imediatamente</strong> — a versão aprovada continua rodando até um revisor aprovar esta mudança.
+            </div>
+          )}
           <div className="form-grid" style={{marginBottom:13}}>
             <div className="field">
               <label className="field-label">Nome do Teste<span className="req">*</span></label>
@@ -706,7 +737,7 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
             />
           </div>
 
-          {hits.length>0 && <div className="val-error">⛔ Padrões bloqueados: <strong>{hits.join(", ")}</strong></div>}
+          {hits.length>0 && <div className="val-error">⛔ <strong>{hits.join(" · ")}</strong></div>}
 
           {/* Validation / Run test */}
           <div style={{border:"1px solid var(--border)",borderRadius:"var(--rs)",overflow:"hidden",marginTop:10}}>
@@ -717,11 +748,11 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
                 disabled={testLoading||!form.query_code?.trim()}
                 style={{minWidth:140}}
               >
-                {testLoading ? "⏳ Executando..." : tested ? "✓ Query Validada" : "▶ Validar e Testar Query"}
+                {testLoading ? "⏳ Executando..." : tested ? (form.query_type==="PYTHON" ? "✓ Sintaxe OK" : "✓ Query Validada") : (form.query_type==="PYTHON" ? "▶ Validar Sintaxe" : "▶ Validar e Testar Query")}
               </button>
               {form.query_type==="PYTHON" && (
                 <span style={{fontSize:11,color:"var(--text-muted)"}}>
-                  Python: valida sintaxe e estrutura • execução completa ocorre no orquestrador
+                  Python: valida apenas a sintaxe • o código não é executado aqui, só no orquestrador
                 </span>
               )}
               {form.query_type==="SQL" && !testLoading && !tested && (
@@ -779,15 +810,28 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
 
         <div className="modal-foot">
           <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
-          <button className="btn btn-ghost" onClick={()=>handleSubmit(false)} disabled={saving}>{saving?"Salvando...":"Salvar Rascunho"}</button>
-          <button
-            className="btn btn-primary"
-            onClick={()=>handleSubmit(true)}
-            disabled={saving}
-            title={!tested?"Valide a query antes de submeter":hits.length>0?"Corrija os padrões bloqueados":""}
-          >
-            {saving?"Enviando...":"Submeter para Revisão →"}
-          </button>
+          {isEdit && form.status==="ACTIVE" ? (
+            <button
+              className="btn btn-primary"
+              onClick={()=>handleSubmit(true)}
+              disabled={saving}
+              title={!tested?"Valide a query antes de enviar":hits.length>0?"Corrija os problemas apontados":""}
+            >
+              {saving?"Enviando...":"Enviar alteração para revisão →"}
+            </button>
+          ) : (
+            <>
+              <button className="btn btn-ghost" onClick={()=>handleSubmit(false)} disabled={saving}>{saving?"Salvando...":"Salvar Rascunho"}</button>
+              <button
+                className="btn btn-primary"
+                onClick={()=>handleSubmit(true)}
+                disabled={saving}
+                title={!tested?"Valide a query antes de submeter":hits.length>0?"Corrija os problemas apontados":""}
+              >
+                {saving?"Enviando...":"Submeter para Revisão →"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -837,7 +881,7 @@ function ExecTable({execs}) {
 }
 
 // ── AchadosTab ─────────────────────────────────────────────────────────────
-function AchadosTab({testId, testName}) {
+function AchadosTab({testId, testName, toast=()=>{}}) {
   const [showModal, setShowModal] = useState(false);
   const [data, setData]     = useState(null);
   const [loading, setLoad]  = useState(true);
@@ -915,7 +959,7 @@ function AchadosTab({testId, testName}) {
       )}
 
       {showModal && (
-        <AchadosModal testId={testId} testName={testName} execDates={data?.exec_dates||[]} onClose={()=>setShowModal(false)}/>
+        <AchadosModal testId={testId} testName={testName} execDates={data?.exec_dates||[]} onClose={()=>setShowModal(false)} toast={toast}/>
       )}
     </div>
   );
@@ -1051,7 +1095,7 @@ function FPUnmarkConfirm({onConfirm, onClose}) {
 }
 
 // ── AchadosModal ──────────────────────────────────────────────────────────────
-function AchadosModal({testId, testName, execDates, onClose}) {
+function AchadosModal({testId, testName, execDates, onClose, toast=()=>{}}) {
   const [dateSel,  setDateSel]  = useState("latest");  // "latest" | "all" | "<YYYY-MM-DD>"
   const [dateFrom, setDateFrom] = useState("");        // custom range — overrides dateSel when set
   const [dateTo,   setDateTo]   = useState("");
@@ -1099,9 +1143,12 @@ function AchadosModal({testId, testName, execDates, onClose}) {
     try {
       await api.markFP({test_name: testName, match_criteria: criteria, note,
                         row_hash: row._row_hash, row_data});
-    } catch(e) {}
-    setFpActing(null);
-    loadData();
+      loadData();
+    } catch(e) {
+      toast(e.message || "Não foi possível marcar o falso positivo", "error");
+    } finally {
+      setFpActing(null);
+    }
   }
 
   async function doUnmarkFP(row) {
@@ -1110,9 +1157,12 @@ function AchadosModal({testId, testName, execDates, onClose}) {
     try {
       // The matched FP id is attached to the row by the backend
       if (row._fp_id) await api.unmarkFP(row._fp_id);
-    } catch(e) {}
-    setFpActing(null);
-    loadData();
+      loadData();
+    } catch(e) {
+      toast(e.message || "Não foi possível remover a marcação de FP", "error");
+    } finally {
+      setFpActing(null);
+    }
   }
 
   const displayCols = (data?.columns||[]).filter(c=>c!=="ArchiveDate");
@@ -1295,7 +1345,7 @@ function AchadosModal({testId, testName, execDates, onClose}) {
 }
 
 // ── SuppressionTab ───────────────────────────────────────────────────────────
-function SuppressionTab({testId, testName}) {
+function SuppressionTab({testId, testName, toast=()=>{}}) {
   const [suppressions, setSuppressions] = useState(null);
   const [showAdd, setShowAdd]           = useState(false);
   const [entryQ, setEntryQ]             = useState("");
@@ -1327,21 +1377,31 @@ function SuppressionTab({testId, testName}) {
   async function addSuppression() {
     if (!selected) return;
     setSaving(true);
-    await api.createSuppression(testId, {
-      linked_entry_id:    selected.RiskEntryId,
-      linked_entry_title: selected.RiskEntryTitle,
-      note,
-    });
-    setSaving(false);
-    setShowAdd(false); setEntryQ(""); setSelected(null); setNote("");
-    load();
+    try {
+      await api.createSuppression(testId, {
+        linked_entry_id:    selected.RiskEntryId,
+        linked_entry_title: selected.RiskEntryTitle,
+        note,
+      });
+      setShowAdd(false); setEntryQ(""); setSelected(null); setNote("");
+      load();
+    } catch(e) {
+      toast(e.message || "Não foi possível vincular o apontamento", "error");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function deactivate(sid) {
     setActing(sid);
-    await api.deleteSuppress(sid);
-    setActing(null);
-    load();
+    try {
+      await api.deleteSuppress(sid);
+      load();
+    } catch(e) {
+      toast(e.message || "Não foi possível desativar a supressão", "error");
+    } finally {
+      setActing(null);
+    }
   }
 
   if (suppressions === null)
@@ -1480,7 +1540,7 @@ function SuppressionTab({testId, testName}) {
 }
 
 // ── TestDetail ────────────────────────────────────────────────────────────────
-function TestDetail({test, user, onClose, onEdit, onPause, onActivate, onRequestDelete}) {
+function TestDetail({test, user, onClose, onEdit, onPause, onActivate, onRequestDelete, toast=()=>{}}) {
   const [tab, setTab]       = useState("info");
   const [history, setHist]  = useState(null);  // null = not loaded
   const [execs, setExecs]   = useState(null);
@@ -1568,8 +1628,8 @@ function TestDetail({test, user, onClose, onEdit, onPause, onActivate, onRequest
                 ? <div className="empty"><div className="empty-title">Sem execuções registradas</div></div>
                 : <ExecTable execs={execs}/>
           )}
-          {tab==="achados"&&<AchadosTab testId={test.test_id} testName={test.test_name}/>}
-          {tab==="suppressions"&&<SuppressionTab testId={test.test_id} testName={test.test_name}/>}
+          {tab==="achados"&&<AchadosTab testId={test.test_id} testName={test.test_name} toast={toast}/>}
+          {tab==="suppressions"&&<SuppressionTab testId={test.test_id} testName={test.test_name} toast={toast}/>}
           {tab==="history"&&(
             history===null
               ? <div className="loading"><div className="spinner"/>Carregando histórico...</div>
@@ -1795,7 +1855,7 @@ function RowExpandPanel({criteria, rowDataStr, colSpan}) {
   );
 }
 
-function FalsePositivesPage({onOpenTest}) {
+function FalsePositivesPage({onOpenTest, toast=()=>{}}) {
   const [tab,       setTab]      = useState("active");
   const [data,      setData]     = useState(null);
   const [hist,      setHist]     = useState(null);
@@ -1826,11 +1886,16 @@ function FalsePositivesPage({onOpenTest}) {
   async function doRemove(fp_id) {
     setRem(null);
     setAct(fp_id);
-    try { await api.unmarkFP(fp_id); } catch(e) {}
-    setAct(null);
-    setExpanded(null);
-    loadActive();
-    loadHistory();  // always refresh history so "Removido" event appears
+    try {
+      await api.unmarkFP(fp_id);
+      setExpanded(null);
+      loadActive();
+      loadHistory();  // always refresh history so "Removido" event appears
+    } catch(e) {
+      toast(e.message || "Não foi possível remover o falso positivo", "error");
+    } finally {
+      setAct(null);
+    }
   }
 
   const items = data?.items || [];
@@ -2013,12 +2078,44 @@ function FalsePositivesPage({onOpenTest}) {
   );
 }
 
+// ── Query line diff (for reviewing edits) ────────────────────────────────────
+function diffLines(oldStr, newStr) {
+  const o = (oldStr||"").split("\n"), n = (newStr||"").split("\n");
+  const m = o.length, k = n.length;
+  const dp = Array.from({length:m+1}, ()=>new Array(k+1).fill(0));
+  for (let i=m-1;i>=0;i--) for (let j=k-1;j>=0;j--)
+    dp[i][j] = o[i]===n[j] ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j], dp[i][j+1]);
+  const out = []; let i=0, j=0;
+  while (i<m && j<k) {
+    if (o[i]===n[j]) { out.push({t:"ctx",v:o[i]}); i++; j++; }
+    else if (dp[i+1][j] >= dp[i][j+1]) { out.push({t:"del",v:o[i]}); i++; }
+    else { out.push({t:"add",v:n[j]}); j++; }
+  }
+  while (i<m) out.push({t:"del",v:o[i++]});
+  while (j<k) out.push({t:"add",v:n[j++]});
+  return out;
+}
+function QueryDiff({oldCode, newCode}) {
+  const rows = diffLines(oldCode, newCode);
+  return (
+    <div className="code-preview" style={{maxHeight:220,fontFamily:"var(--mono)",fontSize:12}}>
+      {rows.map((r,i)=>(
+        <div key={i} style={{whiteSpace:"pre-wrap",
+          background:r.t==="add"?"#e6ffed":r.t==="del"?"#ffeef0":"transparent",
+          color:r.t==="add"?"#065f46":r.t==="del"?"#b91c1c":"var(--text-muted)"}}>
+          {r.t==="add"?"+ ":r.t==="del"?"- ":"  "}{r.v}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── ReviewQueue ───────────────────────────────────────────────────────────────
 function ReviewQueue({tests, user, onApprove, onReject, loading}) {
   const [rejectId, setRid] = useState(null);
   const [reason, setReason]= useState("");
   const [acting, setActing]= useState(null);
-  const queue = tests.filter(t=>["UNDER_REVIEW","PENDING_DELETE"].includes(t.status));
+  const queue = tests.filter(t=>["UNDER_REVIEW","PENDING_DELETE"].includes(t.status) || t.has_pending_review);
 
   async function doApprove(t){setActing(t.test_id);await onApprove(t);setActing(null);}
   async function doReject(t){if(!reason.trim())return;setActing(t.test_id);await onReject(t,reason);setRid(null);setReason("");setActing(null);}
@@ -2029,33 +2126,42 @@ function ReviewQueue({tests, user, onApprove, onReject, loading}) {
   return (
     <div>
       {queue.map(t=>{
-        const isOwn   = t.created_by===user?.email && !user?.can_self_review;
+        const isPending = !!t.has_pending_review;
+        const submitter = isPending ? (t.pending_submitted_by||t.created_by) : t.created_by;
+        const isOwn   = submitter===user?.email && !user?.can_self_review;
         const isDel   = t.status==="PENDING_DELETE";
         return (
           <div className={`review-card${isDel?" delete-req":""}`} key={t.test_id}>
             <div className="review-card-head">
               {t.category&&<span style={{fontFamily:"var(--mono)",fontSize:10,color:"var(--text-subtle)"}}>{t.category}/</span>}
               <span className="review-card-title">{t.test_name}</span>
-              <TypeBadge t={t.query_type}/>
+              <TypeBadge t={isPending?(t.pending_query_type||t.query_type):t.query_type}/>
               <span className="badge badge-draft" style={{fontSize:10}}>v{t.version}</span>
               {isDel&&<span className="badge badge-pdelete">🗑 Solicitação de Exclusão</span>}
+              {isPending&&!isDel&&<span className="badge badge-review" style={{fontSize:10}}>⏳ Alteração em teste ativo</span>}
             </div>
             <div className="review-meta">
-              <div className="meta-item"><span className="meta-lbl">Solicitado por</span><span className="meta-val">{t.created_by}</span></div>
-              <div className="meta-item"><span className="meta-lbl">Área</span><span className="meta-val">{t.responsible_area||"—"}</span></div>
-              <div className="meta-item"><span className="meta-lbl">Risco</span><span className="meta-val">{t.risco_id||"—"}</span></div>
-              {!isDel&&<><div className="meta-item"><span className="meta-lbl">Threshold</span><span className="meta-val">{t.threshold}</span></div><div className="meta-item"><span className="meta-lbl">Frequência</span><span className="meta-val">{t.frequency}</span></div></>}
+              <div className="meta-item"><span className="meta-lbl">Solicitado por</span><span className="meta-val">{submitter}</span></div>
+              <div className="meta-item"><span className="meta-lbl">Área</span><span className="meta-val">{(isPending?t.pending_responsible_area:t.responsible_area)||"—"}</span></div>
+              <div className="meta-item"><span className="meta-lbl">Risco</span><span className="meta-val">{(isPending?t.pending_risco_id:t.risco_id)||"—"}</span></div>
+              {!isDel&&<><div className="meta-item"><span className="meta-lbl">Threshold</span><span className="meta-val">{isPending?t.pending_threshold:t.threshold}</span></div><div className="meta-item"><span className="meta-lbl">Frequência</span><span className="meta-val">{isPending?t.pending_frequency:t.frequency}</span></div></>}
             </div>
             {isDel
               ? <div className="alert alert-warn">⚠️ Aprovar irá <strong>cancelar</strong> permanentemente. Rejeitar mantém o teste ativo.</div>
-              : <>
-                  {t.description&&<p style={{fontSize:12.5,color:"var(--text-muted)",marginBottom:10}}>{t.description}</p>}
-                  {t.query_type==="PYTHON"&&t.imports&&<div className="code-preview imports" style={{marginBottom:8,maxHeight:72}}>{t.imports}</div>}
-                  <div className="code-preview query" style={{marginBottom:12,maxHeight:160}}>{t.query_code}</div>
-                  <RunPreviewInline test={t}/>
-                </>
+              : isPending
+                ? <>
+                    <div className="alert alert-info" style={{fontSize:12}}>✎ Alteração proposta para um teste <strong>ativo</strong>. A versão aprovada continua rodando até você aprovar. Abaixo, o que muda na query:</div>
+                    <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:4,fontFamily:"var(--mono)"}}>Diff da query (— remove · + adiciona)</div>
+                    <div style={{marginBottom:12}}><QueryDiff oldCode={t.query_code} newCode={t.pending_query_code}/></div>
+                  </>
+                : <>
+                    {t.description&&<p style={{fontSize:12.5,color:"var(--text-muted)",marginBottom:10}}>{t.description}</p>}
+                    {t.query_type==="PYTHON"&&t.imports&&<div className="code-preview imports" style={{marginBottom:8,maxHeight:72}}>{t.imports}</div>}
+                    <div className="code-preview query" style={{marginBottom:12,maxHeight:160}}>{t.query_code}</div>
+                    <RunPreviewInline test={t}/>
+                  </>
             }
-            {isOwn&&<div className="alert alert-warn">⚠️ Você criou este teste e não pode aprová-lo.</div>}
+            {isOwn&&<div className="alert alert-warn">⚠️ Você submeteu esta alteração e não pode aprová-la.</div>}
             {rejectId===t.test_id ? (
               <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
                 <div className="field" style={{flex:1}}>
@@ -2068,7 +2174,7 @@ function ReviewQueue({tests, user, onApprove, onReject, loading}) {
             ):(
               <div className="review-actions">
                 <button className="btn btn-danger btn-sm" disabled={isOwn||acting===t.test_id} onClick={()=>setRid(t.test_id)}>✕ {isDel?"Manter":"Rejeitar"}</button>
-                <button className="btn btn-success btn-sm" disabled={isOwn||acting===t.test_id} onClick={()=>doApprove(t)}>{acting===t.test_id?"...":(isDel?"✓ Confirmar Exclusão":"✓ Aprovar e Ativar")}</button>
+                <button className="btn btn-success btn-sm" disabled={isOwn||acting===t.test_id} onClick={()=>doApprove(t)}>{acting===t.test_id?"...":(isDel?"✓ Confirmar Exclusão":isPending?"✓ Aprovar Alteração":"✓ Aprovar e Ativar")}</button>
               </div>
             )}
           </div>
@@ -2174,7 +2280,7 @@ function MultiStatusSelect({selected, onChange}) {
 // ── TestList ──────────────────────────────────────────────────────────────────
 function TestList({tests, loading, onSelect, onNew}) {
   const [search,   setSearch]   = useState("");
-  const [statuses, setStatuses] = useState(["ACTIVE","PAUSED","UNDER_REVIEW"]);
+  const [statuses, setStatuses] = useState(["ACTIVE","PAUSED","UNDER_REVIEW","DRAFT","REJECTED"]);
   const filtered = tests.filter(t=>{
     const q=search.toLowerCase();
     const ms=(t.test_name||"").toLowerCase().includes(q)||(t.responsible_area||"").toLowerCase().includes(q)||(t.category||"").toLowerCase().includes(q);
@@ -2192,14 +2298,14 @@ function TestList({tests, loading, onSelect, onNew}) {
       {loading?<div className="loading"><div className="spinner"/>Carregando...</div>:
        filtered.length===0?<div className="empty"><div className="empty-icon">🔎</div><div className="empty-title">Nenhum teste encontrado</div></div>:(
         <table>
-          <thead><tr><th>Teste</th><th>Área</th><th>Tipo</th><th>Freq.</th><th>Última Execução</th><th>Status do Teste</th><th>Achados</th><th>Status</th></tr></thead>
+          <thead><tr><th>Teste</th><th>Área</th><th>Tipo</th><th>Freq.</th><th>Última Execução</th><th>Alerta</th><th>Achados</th><th>Status</th></tr></thead>
           <tbody>
             {filtered.map(t=>(
               <tr key={t.test_id} onClick={()=>onSelect(t)}>
                 <td>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                     <div className="cell-name">{t.test_name}</div>
-
+                    {t.has_pending_review&&<span className="badge badge-review" style={{fontSize:9}} title="Há uma alteração aguardando aprovação">⏳ Alteração pendente</span>}
                   </div>
                   {t.category&&<div className="cell-sub">{t.category}</div>}
                 </td>
@@ -2415,10 +2521,30 @@ function ChartCard({chart, isFirst, isLast, onEdit, onDelete, onMove}) {
 }
 
 // ── ViewPage ──────────────────────────────────────────────────────────────────
-function ViewPage({view, tests}) {
+// ── ConfirmModal — reusable confirmation dialog (matches app styling) ─────────
+function ConfirmModal({title, message, confirmLabel="Excluir", danger=true, onConfirm, onClose}) {
+  return (
+    <div className="overlay" style={{zIndex:300}} onMouseDown={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal" style={{width:420}}>
+        <div className="modal-head">
+          <div className="modal-title" style={danger?{color:"var(--danger)"}:{}}>{title}</div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body"><p style={{fontSize:13,color:"var(--text-muted)",lineHeight:1.6}}>{message}</p></div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className={`btn ${danger?"btn-danger":"btn-primary"}`} onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ViewPage({view, tests, toast=()=>{}}) {
   const [charts,       setCharts]       = useState([]);
   const [loadingCharts,setLoadingCharts]= useState(true);
   const [chartModal,   setChartModal]   = useState(null); // null | {mode:"add"} | {mode:"edit", chart}
+  const [confirmChart, setConfirmChart] = useState(null);
 
   function loadCharts() {
     setLoadingCharts(true);
@@ -2429,11 +2555,11 @@ function ViewPage({view, tests}) {
 
   useEffect(() => { loadCharts(); }, [view.view_id]);
 
-  function handleDelete(chart) {
-    if (!window.confirm(`Excluir o gráfico "${chart.title}"?`)) return;
+  function doDeleteChart(chart) {
+    setConfirmChart(null);
     api.deleteChart(chart.chart_id)
       .then(loadCharts)
-      .catch(e => alert("Erro ao excluir: " + (e.message || e)));
+      .catch(e => toast("Erro ao excluir gráfico: " + (e.message || e), "error"));
   }
 
   function handleMove(chart, dir) {
@@ -2465,7 +2591,7 @@ function ViewPage({view, tests}) {
               isFirst={idx === 0}
               isLast={idx === charts.length - 1}
               onEdit={()=>setChartModal({mode:"edit", chart: c})}
-              onDelete={()=>handleDelete(c)}
+              onDelete={()=>setConfirmChart(c)}
               onMove={dir=>handleMove(c, dir)}
             />
           ))}
@@ -2486,6 +2612,16 @@ function ViewPage({view, tests}) {
             setChartModal(null);
             loadCharts();
           }}
+        />
+      )}
+
+      {confirmChart && (
+        <ConfirmModal
+          title="Excluir gráfico?"
+          message={`O gráfico "${confirmChart.title}" será removido desta view. Esta ação não pode ser desfeita.`}
+          confirmLabel="Excluir gráfico"
+          onConfirm={()=>doDeleteChart(confirmChart)}
+          onClose={()=>setConfirmChart(null)}
         />
       )}
     </div>
@@ -2773,7 +2909,7 @@ function ChartEditorModal({tests, chart, onClose, onSave}) {
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-function Dashboard({tests, areas}) {
+function Dashboard({tests, areas, toast=()=>{}}) {
   const [filters, setFilters] = useState({date_from:"",date_to:"",result:"",area:"",test_name:"",notify:""});
   const [dash, setDash]       = useState(null);
   const [loading, setLoad]    = useState(true);
@@ -2781,6 +2917,7 @@ function Dashboard({tests, areas}) {
   const [views, setViews]     = useState([]);
   // viewModal: null | "new" | {mode:"rename", view_id, title}
   const [viewModal, setViewModal] = useState(null);
+  const [confirmView, setConfirmView] = useState(null);  // view pending deletion
   const setF = (k,v) => setFilters(f=>({...f,[k]:v}));
 
   function loadViews() {
@@ -2800,14 +2937,19 @@ function Dashboard({tests, areas}) {
   const kpi = dash?.kpis||{};
   const testNames = [...new Set(tests.map(t=>t.test_name))].sort();
 
-  const KPIS = [
+  // Coverage = current snapshot (not affected by the date range).
+  // Execuções = respect all filters including the period.
+  const COVERAGE_KPIS = [
     {key:"total_tests",  label:"Testes Implementados", cls:"c-indigo"},
     {key:"risks_covered",label:"Riscos Cobertos",       cls:"c-blue"},
     {key:"areas_covered",label:"Áreas Cobertas",        cls:"c-slate"},
+  ];
+  const RUN_KPIS = [
     {key:"runs_total",   label:"Total de Runs",         cls:"c-amber"},
     {key:"runs_cleared", label:"Runs Cleared",          cls:"c-green"},
     {key:"runs_flagged", label:"Runs Flagged",          cls:"c-red"},
   ];
+  const kpiGroupLabel = {fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".7px",color:"var(--text-subtle)",marginBottom:8,display:"block"};
 
   return (
     <div>
@@ -2860,14 +3002,26 @@ function Dashboard({tests, areas}) {
 
       {loading ? <div className="loading"><div className="spinner"/>Carregando dashboard...</div> : (
         <>
-          {/* KPIs */}
-          <div className="kpi-grid">
-            {KPIS.map(k=>(
-              <div key={k.key} className={`kpi-card ${k.cls}`}>
-                <div className="kpi-label">{k.label}</div>
-                <div className="kpi-val">{kpi[k.key]??0}</div>
-              </div>
-            ))}
+          {/* KPIs — split so it's clear what's a current snapshot vs. filtered by period */}
+          <div style={{marginBottom:20}}>
+            <span style={kpiGroupLabel}>Cobertura · estado atual</span>
+            <div className="grid-3" style={{marginBottom:14}}>
+              {COVERAGE_KPIS.map(k=>(
+                <div key={k.key} className={`kpi-card ${k.cls}`}>
+                  <div className="kpi-label">{k.label}</div>
+                  <div className="kpi-val">{kpi[k.key]??0}</div>
+                </div>
+              ))}
+            </div>
+            <span style={kpiGroupLabel}>Execuções · no período filtrado</span>
+            <div className="grid-3" style={{marginBottom:0}}>
+              {RUN_KPIS.map(k=>(
+                <div key={k.key} className={`kpi-card ${k.cls}`}>
+                  <div className="kpi-label">{k.label}</div>
+                  <div className="kpi-val">{kpi[k.key]??0}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* View tabs */}
@@ -2905,11 +3059,7 @@ function Dashboard({tests, areas}) {
                         <span title="Renomear view" onClick={e=>{e.stopPropagation();setViewModal({mode:"rename",view_id:v.view_id,title:v.title});}}
                           style={{fontSize:11,color:"var(--text-subtle)",cursor:"pointer",padding:"2px 4px",
                                   borderRadius:3,lineHeight:1,display:"flex",alignItems:"center"}}>✎</span>
-                        <span title="Excluir view" onClick={e=>{
-                            e.stopPropagation();
-                            if (!window.confirm(`Excluir a view "${v.title}" e todos os seus gráficos?`)) return;
-                            api.deleteDashView(v.view_id).then(()=>{ setDashTab("execucoes"); loadViews(); }).catch(()=>{});
-                          }}
+                        <span title="Excluir view" onClick={e=>{e.stopPropagation();setConfirmView(v);}}
                           style={{fontSize:11,color:"var(--text-subtle)",cursor:"pointer",padding:"2px 4px",
                                   borderRadius:3,lineHeight:1,display:"flex",alignItems:"center"}}>✕</span>
                       </div>
@@ -3050,7 +3200,7 @@ function Dashboard({tests, areas}) {
                   const viewId = m[1];
                   const view   = views.find(v => v.view_id === viewId);
                   if (!view) return null;
-                  return <ViewPage key={viewId} view={view} tests={tests}/>;
+                  return <ViewPage key={viewId} view={view} tests={tests} toast={toast}/>;
                 })()}
           </div>
 
@@ -3096,6 +3246,22 @@ function Dashboard({tests, areas}) {
               loadViews();
             }
           }}
+        />
+      )}
+
+      {confirmView && (
+        <ConfirmModal
+          title="Excluir view?"
+          message={`A view "${confirmView.title}" e todos os seus gráficos serão removidos. Esta ação não pode ser desfeita.`}
+          confirmLabel="Excluir view"
+          onConfirm={()=>{
+            const id = confirmView.view_id;
+            setConfirmView(null);
+            api.deleteDashView(id)
+              .then(()=>{ setDashTab("execucoes"); loadViews(); })
+              .catch(e=>toast("Erro ao excluir view: " + (e.message || e), "error"));
+          }}
+          onClose={()=>setConfirmView(null)}
         />
       )}
     </div>
@@ -3308,7 +3474,7 @@ function App() {
                       </div>
 
                       {statsView==="current" ? (
-                        <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10}}>
+                        <div className="grid-6">
                           {CURRENT_CARDS.map(c=>(
                             <div key={c.key} className={`stat-card ${c.cls}`}>
                               <div className="stat-label" style={{fontSize:9}}>{c.icon} {c.label}</div>
@@ -3318,7 +3484,7 @@ function App() {
                           ))}
                         </div>
                       ) : (
-                        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+                        <div className="grid-3">
                           <div className="stat-card c-emerald">
                             <div className="stat-label">Sem Achados</div>
                             <div className="stat-val">{stats.cleared??0}</div>
@@ -3343,18 +3509,18 @@ function App() {
               </>
             )}
             {page==="review"&&<ReviewQueue tests={tests} user={user} loading={loading} onApprove={t=>doAction(()=>api.approve(t.test_id),`"${t.test_name}" aprovado ✓`)} onReject={(t,r)=>doAction(()=>api.reject(t.test_id,r),`"${t.test_name}" rejeitado`)}/>}
-            {page==="fp"&&<FalsePositivesPage onOpenTest={testId=>{
+            {page==="fp"&&<FalsePositivesPage toast={toast} onOpenTest={testId=>{
               const t = tests.find(x=>x.test_id===testId);
               if (t) { setPage("tests"); setDetail(t); }
             }}/>}
-            {page==="dash"&&<Dashboard tests={tests} areas={areas}/>}
+            {page==="dash"&&<Dashboard tests={tests} areas={areas} toast={toast}/>}
           </div>
         </main>
       </div>
 
       {editor!==null&&<TestEditor test={editor?.test_id?editor:null} risks={risks} areas={areas} onClose={()=>setEditor(null)} onSave={handleSave} saving={saving}/>}
 
-      {detail&&<TestDetail test={detail} user={user} onClose={()=>setDetail(null)} onEdit={t=>{setDetail(null);setEditor(t);}} onPause={t=>doAction(()=>api.pause(t.test_id),`"${t.test_name}" pausado`)} onActivate={t=>doAction(()=>api.activate(t.test_id),`"${t.test_name}" reativado ✓`)} onRequestDelete={(t,reason)=>doAction(()=>api.requestDelete(t.test_id,reason),`Solicitação de exclusão enviada para revisão`)}/>}
+      {detail&&<TestDetail test={detail} user={user} toast={toast} onClose={()=>setDetail(null)} onEdit={t=>{setDetail(null);setEditor(t);}} onPause={t=>doAction(()=>api.pause(t.test_id),`"${t.test_name}" pausado`)} onActivate={t=>doAction(()=>api.activate(t.test_id),`"${t.test_name}" reativado ✓`)} onRequestDelete={(t,reason)=>doAction(()=>api.requestDelete(t.test_id,reason),`Solicitação de exclusão enviada para revisão`)}/>}
 
       <Toasts toasts={toasts}/>
     </>

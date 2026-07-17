@@ -53,6 +53,44 @@ app = FastAPI(title="Continuous Audit V2", docs_url="/api/docs")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Startup migrations — pending-review columns for editing ACTIVE tests (#1)
+# The approved version keeps running while a proposed change waits for review.
+# ─────────────────────────────────────────────────────────────────────────────
+_PENDING_COLUMNS = [
+    ("pending_query_type",              "STRING"),
+    ("pending_imports",                 "STRING"),
+    ("pending_query_code",              "STRING"),
+    ("pending_threshold",               "INT"),
+    ("pending_frequency",               "STRING"),
+    ("pending_description",             "STRING"),
+    ("pending_responsible_area",        "STRING"),
+    ("pending_risco_id",                "STRING"),
+    ("pending_category",                "STRING"),
+    ("pending_should_activate_channel", "BOOLEAN"),
+    ("pending_submitted_by",            "STRING"),
+    ("pending_submitted_at",            "TIMESTAMP"),
+    ("has_pending_review",              "BOOLEAN"),
+]
+
+
+def _ensure_pending_columns() -> None:
+    """Idempotent: add each pending_* column if it doesn't exist yet."""
+    for name, typ in _PENDING_COLUMNS:
+        try:
+            db.execute(f"ALTER TABLE {T_CFG} ADD COLUMNS ({name} {typ})")
+        except Exception:
+            pass  # column already exists — fine
+
+
+@app.on_event("startup")
+def _startup_migrations() -> None:
+    try:
+        _ensure_pending_columns()
+    except Exception:
+        pass  # never let a migration hiccup block the app from serving
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # User
 # ─────────────────────────────────────────────────────────────────────────────
 class User(BaseModel):
@@ -247,7 +285,7 @@ def get_stats(user: User = Depends(get_user)):
                     WHEN lr.TestResult IS NULL       THEN 'nunca_rodou'
                     WHEN lr.TestResult = 'PASSED'    THEN 'sem_achados'
                     WHEN lr.TestResult = 'ERROR'     THEN 'erro'
-                    WHEN lr.IsSupressed = true       THEN 'em_tratamento'
+                    WHEN sup.suppression_id IS NOT NULL AND lr.TestResult = 'FAILED' THEN 'em_tratamento'
                     WHEN lr.IsRecurrent = true       THEN 'reincidente'
                     WHEN lr.IsContinued = true       THEN 'persistente'
                     WHEN lr.TestResult = 'FAILED'    THEN 'novo_achado'
@@ -260,6 +298,10 @@ def get_stats(user: User = Depends(get_user)):
                     ROW_NUMBER() OVER (PARTITION BY TestName ORDER BY ExecutionDate DESC) AS rn
                 FROM {T_EXEC}
             ) lr ON lr.TestName = c.test_name AND lr.rn = 1
+            LEFT JOIN (
+                SELECT test_id, MIN(suppression_id) AS suppression_id
+                FROM {T_SUPPRESSIONS} WHERE active = true GROUP BY test_id
+            ) sup ON sup.test_id = c.test_id
             WHERE c.status = 'ACTIVE'
             GROUP BY alert_status
         """)
@@ -291,15 +333,15 @@ def get_dashboard(
     notify:    Optional[str] = None,
     user: User = Depends(get_user),
 ):
-    # Build exec filter
+    # Build exec filter (aliased to `e` — every runs_* query joins config as `c`)
     exec_filters = ["1=1"]
     exec_params  = {}
     if date_from:
-        exec_filters.append("ExecutionDate >= %(date_from)s"); exec_params["date_from"] = date_from
+        exec_filters.append("e.ExecutionDate >= %(date_from)s"); exec_params["date_from"] = date_from
     if date_to:
-        exec_filters.append("ExecutionDate <= %(date_to)s");   exec_params["date_to"]   = date_to
+        exec_filters.append("e.ExecutionDate <= %(date_to)s");   exec_params["date_to"]   = date_to
     if result:
-        exec_filters.append("TestResult = %(result)s");        exec_params["result"]    = result
+        exec_filters.append("e.TestResult = %(result)s");        exec_params["result"]    = result
     exec_where = " AND ".join(exec_filters)
 
     # Build cfg filter
@@ -315,14 +357,18 @@ def get_dashboard(
         cfg_filters.append("c.should_activate_channel = false")
     cfg_where = " AND ".join(cfg_filters)
 
-    # KPIs
-    total_tests = db.query(f"SELECT COUNT(*) AS cnt FROM {T_CFG} WHERE status = 'ACTIVE'")[0]["cnt"]
-    risks_covered = db.query(f"SELECT COUNT(DISTINCT risco_id) AS cnt FROM {T_CFG} WHERE status='ACTIVE' AND risco_id IS NOT NULL AND risco_id != 'N/A'")[0]["cnt"]
-    areas_covered = db.query(f"SELECT COUNT(DISTINCT responsible_area) AS cnt FROM {T_CFG} WHERE status='ACTIVE' AND responsible_area IS NOT NULL")[0]["cnt"]
+    # Coverage KPIs (current snapshot) — respect the config filters (area/test/notify)
+    # but not the date range, since they describe the current active portfolio.
+    total_tests = db.query(f"SELECT COUNT(*) AS cnt FROM {T_CFG} c WHERE c.status='ACTIVE' AND {cfg_where}", cfg_params)[0]["cnt"]
+    risks_covered = db.query(f"SELECT COUNT(DISTINCT c.risco_id) AS cnt FROM {T_CFG} c WHERE c.status='ACTIVE' AND c.risco_id IS NOT NULL AND c.risco_id != 'N/A' AND {cfg_where}", cfg_params)[0]["cnt"]
+    areas_covered = db.query(f"SELECT COUNT(DISTINCT c.responsible_area) AS cnt FROM {T_CFG} c WHERE c.status='ACTIVE' AND c.responsible_area IS NOT NULL AND {cfg_where}", cfg_params)[0]["cnt"]
 
-    runs_total = db.query(f"SELECT COUNT(*) AS cnt FROM {T_EXEC} WHERE {exec_where}", exec_params)[0]["cnt"]
-    runs_cleared = db.query(f"SELECT COUNT(*) AS cnt FROM {T_EXEC} WHERE TestResult='PASSED' AND {exec_where}", exec_params)[0]["cnt"]
-    runs_flagged = db.query(f"SELECT COUNT(*) AS cnt FROM {T_EXEC} WHERE TestResult='FAILED' AND {exec_where}", exec_params)[0]["cnt"]
+    # Execution KPIs — join config so area/test/notify filters apply to runs too.
+    _runs_from   = f"FROM {T_EXEC} e JOIN {T_CFG} c ON c.test_name = e.TestName"
+    _runs_params = {**exec_params, **cfg_params}
+    runs_total   = db.query(f"SELECT COUNT(*) AS cnt {_runs_from} WHERE {exec_where} AND {cfg_where}", _runs_params)[0]["cnt"]
+    runs_cleared = db.query(f"SELECT COUNT(*) AS cnt {_runs_from} WHERE e.TestResult='PASSED' AND {exec_where} AND {cfg_where}", _runs_params)[0]["cnt"]
+    runs_flagged = db.query(f"SELECT COUNT(*) AS cnt {_runs_from} WHERE e.TestResult='FAILED' AND {exec_where} AND {cfg_where}", _runs_params)[0]["cnt"]
 
     # By area
     by_area = db.query(f"""
@@ -344,23 +390,26 @@ def get_dashboard(
         GROUP BY c.risco_id, r.RiskTitle ORDER BY cnt DESC LIMIT 20
     """, cfg_params))
 
-    # Tests with open risk entries
+    # Active tests whose linked risk entry is still open (derived from suppressions,
+    # which are the real link between a test and a risk entry — ClosingDate = open/closed).
     tests_with_open_entries = _safe_fallback(lambda: db.query(f"""
         SELECT
             c.test_name,
             c.risco_id,
             c.responsible_area,
-            COUNT(DISTINCT e.id) AS open_entries
-        FROM {T_CFG} c
-        INNER JOIN {T_ENTRIES} e ON CONTAINS(e.RelatedRisks, c.risco_id)
-        WHERE c.status = 'ACTIVE' AND e.Status NOT IN ('Closed','Resolved')
+            COUNT(DISTINCT s.linked_entry_id) AS open_entries
+        FROM {T_SUPPRESSIONS} s
+        JOIN {T_CFG} c     ON c.test_id = s.test_id AND c.status = 'ACTIVE'
+        JOIN {T_ENTRIES} e ON e.RiskEntryId = s.linked_entry_id
+        WHERE s.active = true
+          AND (e.ClosingDate IS NULL OR TRIM(COALESCE(e.ClosingDate, '')) = '')
         GROUP BY c.test_name, c.risco_id, c.responsible_area
         ORDER BY open_entries DESC
         LIMIT 20
     """))
 
     # Run errors count
-    runs_error = db.query(f"SELECT COUNT(*) AS cnt FROM {T_EXEC} WHERE TestResult='ERROR' AND {exec_where}", exec_params)[0]["cnt"]
+    runs_error = db.query(f"SELECT COUNT(*) AS cnt {_runs_from} WHERE e.TestResult='ERROR' AND {exec_where} AND {cfg_where}", _runs_params)[0]["cnt"]
 
     # Test-centric view: last result per active test
     by_test_status = db.query(f"""
@@ -369,14 +418,14 @@ def get_dashboard(
             c.responsible_area,
             c.risco_id,
             lr.TestResult    AS last_result,
-            GREATEST(0, COALESCE(lr.IncidentCount, 0) - COALESCE(fp_agg.fp_count, 0))
+            GREATEST(0, COALESCE(lr.IncidentCountRaw, lr.IncidentCount, 0) - COALESCE(fp_agg.fp_count, 0))
                 AS last_incidents,
             lr.ExecutionDate AS last_run,
             COUNT(e.TestResult) AS total_runs,
             SUM(CASE WHEN e.TestResult = 'FAILED' THEN 1 ELSE 0 END) AS flagged_runs
         FROM {T_CFG} c
         LEFT JOIN (
-            SELECT TestName, TestResult, IncidentCount, ExecutionDate,
+            SELECT TestName, TestResult, IncidentCount, IncidentCountRaw, ExecutionDate,
                 ROW_NUMBER() OVER (PARTITION BY TestName ORDER BY ExecutionDate DESC) AS rn
             FROM {T_EXEC}
         ) lr ON lr.TestName = c.test_name AND lr.rn = 1
@@ -391,7 +440,7 @@ def get_dashboard(
             {"AND e.ExecutionDate <= %(date_to)s" if date_to else ""}
         WHERE c.status = 'ACTIVE' AND {cfg_where}
         GROUP BY c.test_name, c.responsible_area, c.risco_id, lr.TestResult, lr.IncidentCount,
-                 lr.ExecutionDate, fp_agg.fp_count
+                 lr.IncidentCountRaw, lr.ExecutionDate, fp_agg.fp_count
         ORDER BY flagged_runs DESC, c.test_name
     """, {**cfg_params, **(exec_params)})
 
@@ -528,7 +577,7 @@ def run_preview(body: RunPreviewIn, user: User = Depends(get_user)):
     elif qt == "PYTHON":
         try:
             ast.parse(f"{body.imports or ''}\n{body.query_code}")
-            return {"success": True, "message": "Sintaxe OK. Certifique-se de que o resultado é atribuído a `df_incidents`."}
+            return {"success": True, "message": "Sintaxe OK — o código não é executado aqui; a execução real ocorre no orquestrador. Garanta que o resultado é atribuído a `df_incidents`."}
         except SyntaxError as e:
             return {"success": False, "error": f"Erro de sintaxe na linha {e.lineno}: {e.msg}"}
     return {"success": False, "error": f"Tipo desconhecido: {qt}"}
@@ -545,7 +594,7 @@ def list_tests(user: User = Depends(get_user)):
                 c.*,
                 lr.TestResult    AS last_result,
                 lr.ExecutionDate AS last_run,
-                GREATEST(0, COALESCE(lr.IncidentCount, 0) - COALESCE(fp_agg.fp_count, 0))
+                GREATEST(0, COALESCE(lr.IncidentCountRaw, lr.IncidentCount, 0) - COALESCE(fp_agg.fp_count, 0))
                     AS last_incident_count,
                 CASE WHEN sup.suppression_id IS NOT NULL THEN true ELSE false END AS has_active_suppression,
                 CASE
@@ -560,13 +609,14 @@ def list_tests(user: User = Depends(get_user)):
                 END AS last_alert_status
             FROM {T_CFG} c
             LEFT JOIN (
-                SELECT TestName, TestResult, ExecutionDate, IncidentCount,
+                SELECT TestName, TestResult, ExecutionDate, IncidentCount, IncidentCountRaw,
                     IsSupressed, IsRecurrent, IsContinued,
                     ROW_NUMBER() OVER (PARTITION BY TestName ORDER BY ExecutionDate DESC) AS rn
                 FROM {T_EXEC}
             ) lr ON lr.TestName = c.test_name AND lr.rn = 1
             LEFT JOIN (
-                SELECT test_id, suppression_id FROM {T_SUPPRESSIONS} WHERE active = true
+                SELECT test_id, MIN(suppression_id) AS suppression_id
+                FROM {T_SUPPRESSIONS} WHERE active = true GROUP BY test_id
             ) sup ON sup.test_id = c.test_id
             LEFT JOIN (
                 SELECT test_name, COUNT(*) AS fp_count
@@ -845,12 +895,57 @@ def create_test(body: TestIn, submit: bool = False, user: User = Depends(get_use
 def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Depends(get_user)):
     test = _require_test(test_id)
 
-    # DRAFT/REJECTED: full edit
-    # ACTIVE: allowed but test_name and output_table are locked (preserved from DB)
+    # DRAFT/REJECTED: full edit, freely (draft or submit for review)
+    # ACTIVE: any change becomes a PENDING edit that requires approval — the approved
+    #         (live) version keeps running until a reviewer approves the change (#1)
     # Other statuses: not editable
     if test["status"] not in ("DRAFT", "REJECTED", "ACTIVE"):
         raise HTTPException(400, f"Testes com status '{test['status']}' não podem ser editados")
 
+    now = datetime.utcnow()
+    is_active = test["status"] == "ACTIVE"
+
+    # ── ACTIVE: stage a pending change; never touch the live version ──────────────
+    if is_active:
+        # An edit to an active test always goes to review, so enforce full validation.
+        _validate_required_fields(body, submit=True)
+        try:
+            validation.validate(body.query_type, body.imports, body.query_code)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+        db.execute(f"""
+            UPDATE {T_CFG} SET
+                pending_query_type              = %(query_type)s,
+                pending_imports                 = %(imports)s,
+                pending_query_code              = %(query_code)s,
+                pending_threshold               = %(threshold)s,
+                pending_frequency               = %(frequency)s,
+                pending_description             = %(description)s,
+                pending_responsible_area        = %(responsible_area)s,
+                pending_risco_id                = %(risco_id)s,
+                pending_category                = %(category)s,
+                pending_should_activate_channel = %(should_activate_channel)s,
+                pending_submitted_by            = %(by)s,
+                pending_submitted_at            = %(now)s,
+                has_pending_review              = true,
+                updated_at                      = %(now)s
+            WHERE test_id = %(test_id)s
+        """, {
+            "query_type": body.query_type, "imports": body.imports,
+            "query_code": body.query_code, "threshold": body.threshold,
+            "frequency": body.frequency, "description": body.description,
+            "responsible_area": body.responsible_area, "risco_id": body.risco_id,
+            "category": body.category,
+            "should_activate_channel": body.should_activate_channel,
+            "by": user.email, "now": now, "test_id": test_id,
+        })
+        _insert_history(test_id, test["test_name"], test["version"], body.query_type,
+                        body.imports, body.query_code, "ACTIVE", "ACTIVE",
+                        "EDITED_PENDING_REVIEW", user.email)
+        return {"test_id": test_id, "status": "ACTIVE", "pending_review": True}
+
+    # ── DRAFT/REJECTED: edit the row directly ────────────────────────────────────
     _validate_required_fields(body, submit)
     if submit:
         try:
@@ -858,19 +953,10 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
         except ValueError as e:
             raise HTTPException(400, str(e))
 
-    now         = datetime.utcnow()
     new_version = int(test["version"] or 1) + 1
+    status = "UNDER_REVIEW" if submit else "DRAFT"
 
-    # ACTIVE: stays ACTIVE on save-draft, goes to UNDER_REVIEW on submit
-    # DRAFT/REJECTED: goes to DRAFT or UNDER_REVIEW
-    is_active = test["status"] == "ACTIVE"
-    status = "UNDER_REVIEW" if submit else ("ACTIVE" if is_active else "DRAFT")
-
-    # Lock test_name and output_table when editing an ACTIVE test
-    effective_name  = test["test_name"]    if is_active else body.test_name
-    effective_table = test["output_table"] if is_active else body.output_table
-
-    if not is_active and not effective_table.startswith("tb_incidents_"):
+    if not body.output_table.startswith("tb_incidents_"):
         raise HTTPException(400, "O nome da tabela deve começar com 'tb_incidents_'")
 
     db.execute(f"""
@@ -893,7 +979,7 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
             rejection_reason        = NULL
         WHERE test_id = %(test_id)s
     """, {
-        "test_name": effective_name, "output_table": effective_table,
+        "test_name": body.test_name, "output_table": body.output_table,
         "description": body.description, "responsible_area": body.responsible_area,
         "risco_id": body.risco_id, "threshold": body.threshold,
         "frequency": body.frequency, "query_type": body.query_type,
@@ -903,7 +989,7 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
         "now": now, "version": new_version, "test_id": test_id,
     })
 
-    _insert_history(test_id, effective_name, new_version, body.query_type,
+    _insert_history(test_id, body.test_name, new_version, body.query_type,
                     body.imports, body.query_code, test["status"], status,
                     "SUBMITTED_FOR_REVIEW" if submit else "EDITED", user.email)
     return {"test_id": test_id, "status": status}
@@ -915,12 +1001,56 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
 @app.post("/api/tests/{test_id}/approve")
 def approve_test(test_id: str, user: User = Depends(get_user)):
     test = _require_test(test_id)
+    now = datetime.utcnow()
+
+    # Pending edit on an ACTIVE test → promote the proposed version into the live one.
+    if test.get("has_pending_review"):
+        submitter = test.get("pending_submitted_by")
+        if submitter == user.email and user.email not in SELF_REVIEW_ALLOWED:
+            raise HTTPException(403, "Você não pode aprovar uma alteração que submeteu")
+        new_version = int(test["version"] or 1) + 1
+        db.execute(f"""
+            UPDATE {T_CFG} SET
+                query_type              = pending_query_type,
+                imports                 = pending_imports,
+                query_code              = pending_query_code,
+                threshold               = pending_threshold,
+                frequency               = pending_frequency,
+                description             = pending_description,
+                responsible_area        = pending_responsible_area,
+                risco_id                = pending_risco_id,
+                category                = pending_category,
+                should_activate_channel = pending_should_activate_channel,
+                version                 = %(v)s,
+                reviewed_by             = %(r)s,
+                updated_at              = %(n)s,
+                rejection_reason        = NULL,
+                has_pending_review              = false,
+                pending_query_type              = NULL,
+                pending_imports                 = NULL,
+                pending_query_code              = NULL,
+                pending_threshold               = NULL,
+                pending_frequency               = NULL,
+                pending_description             = NULL,
+                pending_responsible_area        = NULL,
+                pending_risco_id                = NULL,
+                pending_category                = NULL,
+                pending_should_activate_channel = NULL,
+                pending_submitted_by            = NULL,
+                pending_submitted_at            = NULL
+            WHERE test_id = %(id)s
+        """, {"v": new_version, "r": user.email, "n": now, "id": test_id})
+        _insert_history(test_id, test["test_name"], new_version,
+                        test.get("pending_query_type"), test.get("pending_imports"),
+                        test.get("pending_query_code"), "ACTIVE", "ACTIVE",
+                        "APPROVED", user.email)
+        return {"status": "ACTIVE", "promoted": True}
+
     if test["status"] not in ("UNDER_REVIEW", "PENDING_DELETE"):
         raise HTTPException(400, "Status inválido para aprovação")
     if test["created_by"] == user.email and user.email not in SELF_REVIEW_ALLOWED:
         raise HTTPException(403, "Você não pode aprovar um teste que criou")
 
-    now = datetime.utcnow()
     if test["status"] == "PENDING_DELETE":
         db.execute(f"UPDATE {T_CFG} SET status='CANCELLED', reviewed_by=%(r)s, updated_at=%(n)s WHERE test_id=%(id)s",
                    {"r": user.email, "n": now, "id": test_id})
@@ -938,12 +1068,43 @@ def approve_test(test_id: str, user: User = Depends(get_user)):
 @app.post("/api/tests/{test_id}/reject")
 def reject_test(test_id: str, body: RejectIn, user: User = Depends(get_user)):
     test = _require_test(test_id)
+    now  = datetime.utcnow()
+
+    # Reject a pending edit → discard the proposal; the live version keeps running.
+    if test.get("has_pending_review"):
+        submitter = test.get("pending_submitted_by")
+        if submitter == user.email and user.email not in SELF_REVIEW_ALLOWED:
+            raise HTTPException(403, "Você não pode rejeitar uma alteração que submeteu")
+        db.execute(f"""
+            UPDATE {T_CFG} SET
+                has_pending_review              = false,
+                pending_query_type              = NULL,
+                pending_imports                 = NULL,
+                pending_query_code              = NULL,
+                pending_threshold               = NULL,
+                pending_frequency               = NULL,
+                pending_description             = NULL,
+                pending_responsible_area        = NULL,
+                pending_risco_id                = NULL,
+                pending_category                = NULL,
+                pending_should_activate_channel = NULL,
+                pending_submitted_by            = NULL,
+                pending_submitted_at            = NULL,
+                rejection_reason                = %(rr)s,
+                reviewed_by                     = %(r)s,
+                updated_at                      = %(n)s
+            WHERE test_id = %(id)s
+        """, {"rr": body.reason, "r": user.email, "n": now, "id": test_id})
+        _insert_history(test_id, test["test_name"], test["version"], test["query_type"],
+                        test["imports"], test["query_code"], "ACTIVE", "ACTIVE",
+                        "REJECTED", user.email, body.reason)
+        return {"status": "ACTIVE", "pending_rejected": True}
+
     if test["status"] not in ("UNDER_REVIEW", "PENDING_DELETE"):
         raise HTTPException(400, "Status inválido para rejeição")
     if test["created_by"] == user.email and user.email not in SELF_REVIEW_ALLOWED:
         raise HTTPException(403, "Você não pode rejeitar um teste que criou")
 
-    now        = datetime.utcnow()
     new_status = "ACTIVE" if test["status"] == "PENDING_DELETE" else "REJECTED"
     db.execute(f"UPDATE {T_CFG} SET status=%(s)s, reviewed_by=%(r)s, rejection_reason=%(rr)s, updated_at=%(n)s WHERE test_id=%(id)s",
                {"s": new_status, "r": user.email, "rr": body.reason, "n": now, "id": test_id})
