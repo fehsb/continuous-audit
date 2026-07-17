@@ -374,19 +374,19 @@ const S_CLS   = {ACTIVE:"active",DRAFT:"draft",UNDER_REVIEW:"review",PAUSED:"pau
 const R_LABEL = {PASSED:"Cleared",FAILED:"Flagged",ERROR:"Error"};
 
 const ALERT_META = {
-  sem_achados:   {label:"Sem Achados",        icon:"✅", cls:"sem_achados"},
-  novo_achado:   {label:"Novo Achado",         icon:"🆕", cls:"com_achados"},
-  persistente:   {label:"Achado Persistente",  icon:"🔁", cls:"draft"},
-  reincidente:   {label:"Risco Reincidente",   icon:"⚠️", cls:"com_achados"},
-  em_tratamento: {label:"Em Tratamento",       icon:"🔕", cls:"review"},
-  erro:          {label:"Erro",                icon:"❌", cls:"erro"},
-  nunca_rodou:   {label:"—",                   icon:"",   cls:"draft"},
+  sem_achados:   {label:"Sem Achados",        icon:"✅", cls:"sem_achados", desc:"Última execução PASSED — nenhum achado acima do threshold."},
+  novo_achado:   {label:"Novo Achado",         icon:"🆕", cls:"com_achados", desc:"Achados diferentes da execução anterior — primeira materialização deste conjunto."},
+  persistente:   {label:"Achado Persistente",  icon:"🔁", cls:"draft",       desc:"Mesmos achados da execução anterior, ainda sem resolução. Não dispara novo alerta."},
+  reincidente:   {label:"Risco Reincidente",   icon:"⚠️", cls:"com_achados", desc:"Os mesmos achados voltaram após um período limpo — reincidência."},
+  em_tratamento: {label:"Em Tratamento",       icon:"🔕", cls:"review",      desc:"Há um apontamento de risco aberto vinculado — o teste roda e grava, mas não notifica."},
+  erro:          {label:"Erro",                icon:"❌", cls:"erro",        desc:"A execução falhou (ERROR) — veja o traceback na aba Execuções."},
+  nunca_rodou:   {label:"—",                   icon:"",   cls:"draft",       desc:"O teste ainda não foi executado pelo orquestrador."},
 };
 
 function AlertStatusBadge({status}) {
   if (!status) return <span style={{color:"var(--text-subtle)"}}>—</span>;
   const m = ALERT_META[status] || {label:status, icon:"", cls:"draft"};
-  return <span className={`badge badge-${m.cls}`} style={{gap:4}}>{m.icon} {m.label}</span>;
+  return <span className={`badge badge-${m.cls}`} style={{gap:4}} title={m.desc||m.label}>{m.icon} {m.label}</span>;
 }
 const R_CLS   = {PASSED:"cleared",FAILED:"flagged",ERROR:"error"};
 const CHG_LBL = {CREATED:"✦ Criado",EDITED:"✎ Editado",SUBMITTED_FOR_REVIEW:"→ Submetido",APPROVED:"✓ Aprovado",REJECTED:"✕ Rejeitado",PAUSED:"⏸ Pausado",REACTIVATED:"▶ Reativado",CANCELLED:"⊗ Cancelamento Aprovado"};
@@ -687,6 +687,7 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
             <div className="field">
               <label className="field-label">Threshold</label>
               <input className="field-input" type="number" min={0} value={form.threshold} onChange={e=>set("threshold",parseInt(e.target.value)||0)}/>
+              <span style={{fontSize:10.5,color:"var(--text-subtle)",lineHeight:1.4}}>Nº de achados (já sem falsos positivos) acima do qual a execução vira <strong>Flagged</strong>. 0 = qualquer achado alerta.</span>
             </div>
             <div className="field">
               <label className="field-label">Frequência</label>
@@ -1152,6 +1153,8 @@ function AchadosModal({testId, testName, execDates, onClose, toast=()=>{}}) {
       p.date_from = sel;
       p.date_to   = sel;
     }
+    const s = override?.search ?? search;
+    if (s && s.trim()) p.search = s.trim();
     setLoad(true); setEx(null);
     api.getIncidents(testId, p)
       .then(d=>{ setData(d); setAllDates(d.exec_dates||allDates); setLoad(false); })
@@ -1159,6 +1162,13 @@ function AchadosModal({testId, testName, execDates, onClose, toast=()=>{}}) {
   }
 
   useEffect(()=>{ loadData(); }, []);
+  // Debounced server-side search — varre todo o histórico do teste (#10)
+  const firstSearch = useRef(true);
+  useEffect(() => {
+    if (firstSearch.current) { firstSearch.current = false; return; }
+    const t = setTimeout(() => loadData(), 350);
+    return () => clearTimeout(t);
+  }, [search]);
 
   async function doMarkFP(row, note, criteria) {
     setFpMarkRow(null);
@@ -1195,11 +1205,8 @@ function AchadosModal({testId, testName, execDates, onClose, toast=()=>{}}) {
   const displayCols = (data?.columns||[]).filter(c=>c!=="ArchiveDate");
   const fp_count    = data?.fp_count || 0;
 
-  const filtered = (data?.rows||[]).filter(row => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return displayCols.some(c => String(row[c]??"").toLowerCase().includes(q));
-  });
+  // Search is server-side now (#10) — rows already reflect the query across all dates.
+  const filtered = data?.rows || [];
 
   return (
     <>
@@ -1209,8 +1216,9 @@ function AchadosModal({testId, testName, execDates, onClose, toast=()=>{}}) {
           <div style={{flex:1}}>
             <div className="modal-title">🔍 Achados — {testName}</div>
             <div className="modal-sub">
-              {data?.count!=null && `${filtered.length} de ${data.count} registro(s)`}
-              {data?.count>500 && " · mostrando primeiros 500"}
+              {data?.count!=null && `${data.count} registro(s)`}
+              {data?.search && " · busca em todo o histórico"}
+              {data?.limited && " · limite atingido, refine a busca"}
               {fp_count>0 && ` · ${fp_count} FP excluído${fp_count>1?"s":""}`}
             </div>
           </div>
@@ -1621,9 +1629,18 @@ function TestDetail({test, user, onClose, onEdit, onPause, onActivate, onRequest
           </div>
         </div>
         <div className="tabs">
-          {[["info","Informações"],["query","Query"],["executions","Execuções"],["achados","Achados"],["suppressions","Em Tratamento"],["history","Histórico"]].map(([id,lbl])=>(
-            <button key={id} className={`tab${tab===id?" active":""}`} onClick={()=>setTab(id)}>{lbl}</button>
-          ))}
+          {(()=>{
+            // Counts on tabs (#9): Achados is free (comes on the row); Execuções fills
+            // in once loaded; Em Tratamento shows a marker when a suppression is active.
+            const tabCount = {
+              achados:      test.last_incident_count != null ? ` (${test.last_incident_count})` : "",
+              executions:   execs !== null ? ` (${execs.length})` : "",
+              suppressions: test.has_active_suppression ? " •" : "",
+            };
+            return [["info","Informações"],["query","Query"],["executions","Execuções"],["achados","Achados"],["suppressions","Em Tratamento"],["history","Histórico"]].map(([id,lbl])=>(
+              <button key={id} className={`tab${tab===id?" active":""}`} onClick={()=>setTab(id)}>{lbl}{tabCount[id]||""}</button>
+            ));
+          })()}
         </div>
         <div className="modal-body">
           {tab==="info"&&(
