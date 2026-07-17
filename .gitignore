@@ -16,3 +16,6 @@ venv/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Repositório do V1 — só contexto para migração, não versionar
+Repo CA old/
