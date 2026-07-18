@@ -7,7 +7,7 @@
 
 # COMMAND ----------
 
-# MAGIC %run "/Workspace/GRC/Projects/Continuous Audit v2/Setup/utils"
+# MAGIC %run "/Workspace/GRC/Projects/Continuous Audit v2/continuous-audit/Setup/utils"
 
 # COMMAND ----------
 
