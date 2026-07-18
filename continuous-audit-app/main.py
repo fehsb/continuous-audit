@@ -308,22 +308,24 @@ def health(user: User = Depends(get_user)):
     return {"status": "ok", "tables": results, "user": user.email}
 
 
-# Nível de risco inerente vem da tb_risks (decisão de produto): detectamos a
-# coluna de severidade dinamicamente, já que o schema do SharePoint pode variar.
-_RISK_LEVEL_RE = re.compile(r"(n[ií]vel|level|sever|critic|classif|impact|inerente|inherent|grau)", re.I)
+# Nível de risco inerente vem da tb_risks: coluna confirmada pelo usuário
+# (R2InherentLevel), com override por env e fallback por regex se o schema mudar.
+RISK_LEVEL_COL = os.getenv("RISK_LEVEL_COLUMN", "R2InherentLevel")
+_RISK_LEVEL_RE = re.compile(r"(n[ií]vel|level|sever|critic|classif|grau)", re.I)
 
 
 def _detect_risk_level_col() -> Optional[str]:
     try:
-        desc = db.query(f"DESCRIBE TABLE {T_RISKS}")
-        for r in desc:
-            name = (r.get("col_name") or "").strip()
-            if not name or name.startswith("#"):
+        desc  = db.query(f"DESCRIBE TABLE {T_RISKS}")
+        names = [(r.get("col_name") or "").strip() for r in desc]
+        names = [n for n in names if n and not n.startswith("#")]
+        if RISK_LEVEL_COL in names:
+            return RISK_LEVEL_COL
+        for n in names:
+            if n in ("RiskId", "RiskTitle"):
                 continue
-            if name in ("RiskId", "RiskTitle"):
-                continue
-            if _RISK_LEVEL_RE.search(name):
-                return name
+            if _RISK_LEVEL_RE.search(n):
+                return n
     except Exception:
         pass
     return None
