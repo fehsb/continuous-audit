@@ -279,6 +279,10 @@ def me(user: User = Depends(get_user)):
         "email": user.email,
         "name":  user.name,
         "can_self_review": user.email in SELF_REVIEW_ALLOWED,
+        # Data environment — the frontend uses this to render real table paths
+        # instead of a hardcoded catalog/schema.
+        "catalog": CATALOG,
+        "schema":  SCHEMA,
     }
 
 
@@ -304,10 +308,37 @@ def health(user: User = Depends(get_user)):
     return {"status": "ok", "tables": results, "user": user.email}
 
 
+# Nível de risco inerente vem da tb_risks (decisão de produto): detectamos a
+# coluna de severidade dinamicamente, já que o schema do SharePoint pode variar.
+_RISK_LEVEL_RE = re.compile(r"(n[ií]vel|level|sever|critic|classif|impact|inerente|inherent|grau)", re.I)
+
+
+def _detect_risk_level_col() -> Optional[str]:
+    try:
+        desc = db.query(f"DESCRIBE TABLE {T_RISKS}")
+        for r in desc:
+            name = (r.get("col_name") or "").strip()
+            if not name or name.startswith("#"):
+                continue
+            if name in ("RiskId", "RiskTitle"):
+                continue
+            if _RISK_LEVEL_RE.search(name):
+                return name
+    except Exception:
+        pass
+    return None
+
+
 @app.get("/api/risks")
 def list_risks(user: User = Depends(get_user)):
     def _load():
         try:
+            level_col = _detect_risk_level_col()
+            if level_col:
+                return db.query(
+                    f"SELECT RiskId, RiskTitle, CAST(`{level_col}` AS STRING) AS RiskLevel "
+                    f"FROM {T_RISKS} ORDER BY RiskId"
+                )
             return db.query(f"SELECT RiskId, RiskTitle FROM {T_RISKS} ORDER BY RiskId")
         except Exception as e:
             return {"error": f"[{T_RISKS}] {str(e)}", "data": []}
@@ -703,6 +734,7 @@ def list_tests(user: User = Depends(get_user)):
                 lr.ExecutionDate AS last_run,
                 GREATEST(0, COALESCE(lr.IncidentCountRaw, lr.IncidentCount, 0) - COALESCE(fp_agg.fp_count, 0))
                     AS last_incident_count,
+                COALESCE(fp_agg.fp_count, 0) AS active_fp_count,
                 CASE WHEN sup.suppression_id IS NOT NULL THEN true ELSE false END AS has_active_suppression,
                 CASE
                     WHEN lr.TestResult IS NULL       THEN 'nunca_rodou'

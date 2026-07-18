@@ -140,6 +140,9 @@
     .badge-persist{background:var(--persist-soft);color:var(--persist);border-color:var(--persist-b)}
     .badge-recur{background:var(--recur-soft);color:var(--recur);border-color:var(--recur-b)}
     .badge-treat{background:var(--treat-soft);color:var(--treat);border-color:var(--treat-b)}
+    .badge-r-alto{background:var(--danger-soft);color:var(--danger);border-color:var(--danger-b)}
+    .badge-r-medio{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-b)}
+    .badge-r-baixo{background:var(--surface-alt);color:var(--text-muted);border-color:var(--border)}
     .dot-ic{display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0}
     .badge-sql{background:var(--primary-soft);color:var(--primary);border-color:var(--primary-b)}
     .badge-python{background:var(--purple-soft);color:var(--purple);border-color:var(--purple-b)}
@@ -510,6 +513,39 @@ function fmtRelStr(dt) {
 const FmtRel = ({dt}) => dt ? <span title={fmt(dt)}>{fmtRelStr(dt)}</span> : <span>—</span>;
 // D5 — formatação numérica pt-BR em todas as contagens
 const fmtNum = n => (n==null || isNaN(n)) ? (n??0) : Number(n).toLocaleString("pt-BR");
+
+// Nível de risco inerente — herdado da tb_risks (coluna detectada pelo backend).
+// Classifica o rótulo livre do GRC em alto/médio/baixo para colorir o badge.
+function riskLevelClass(label) {
+  const s = (label||"").toLowerCase();
+  if (!s) return null;
+  if (/crit|alt|high|sever|extrem/.test(s)) return "alto";
+  if (/m[eé]d|moder/.test(s))               return "medio";
+  if (/baix|low|min/.test(s))               return "baixo";
+  return "baixo";
+}
+function RiskBadge({risk}) {
+  if (!risk || !risk.RiskLevel) return <span style={{color:"var(--text-subtle)"}}>—</span>;
+  const cls = riskLevelClass(risk.RiskLevel) || "baixo";
+  return (
+    <span className={`badge badge-r-${cls}`}
+          title={risk.RiskTitle ? `${risk.RiskId} — ${risk.RiskTitle}` : risk.RiskId}>
+      {String(risk.RiskLevel)}
+    </span>
+  );
+}
+
+// Próxima execução esperada do orquestrador (diário ~06:00 · semanal sexta · mensal dia 5)
+function nextRunLabel(freq) {
+  const f = (freq||"DAILY").toUpperCase();
+  const now = new Date();
+  const d = new Date(now);
+  const fd = x => x.toLocaleDateString("pt-BR",{weekday:"short",day:"2-digit",month:"2-digit"});
+  if (f === "DAILY")   { if (now.getHours() >= 7) d.setDate(d.getDate()+1); return `${fd(d)} ~06:00`; }
+  if (f === "WEEKLY")  { let add=(5-d.getDay()+7)%7; if (add===0 && now.getHours()>=7) add=7; d.setDate(d.getDate()+add); return `${fd(d)} (sexta)`; }
+  if (f === "MONTHLY") { const t=new Date(now.getFullYear(),now.getMonth(),5,6); if (now>t) t.setMonth(t.getMonth()+1); return `${fd(t)} (dia 5)`; }
+  return f;
+}
 
 // D4 — sistema de ícones SVG (stroke, herda currentColor)
 const ICON_PATHS = {
@@ -1810,7 +1846,7 @@ function SuppressionTab({testId, testName, toast=()=>{}}) {
 }
 
 // ── TestDetail ────────────────────────────────────────────────────────────────
-function TestDetail({test, user, onClose, onEdit, onPause, onActivate, onRequestDelete, onClone, toast=()=>{}}) {
+function TestDetail({test, user, risks, onClose, onEdit, onPause, onActivate, onRequestDelete, onClone, toast=()=>{}}) {
   useEscToClose(onClose);
   const [tab, setTab]       = useState("info");
   const [history, setHist]  = useState(null);  // null = not loaded
@@ -1925,22 +1961,59 @@ function TestDetail({test, user, onClose, onEdit, onPause, onActivate, onRequest
                 onClick={()=>{setTab("query");setShowDiff(true);}}>Ver diferenças</button>
             </div>
           )}
-          {tab==="info"&&(
+          {tab==="info"&&(()=>{
+            const risksArr = Array.isArray(risks) ? risks : (risks?.data || []);
+            const risk = risksArr.find(r => r.RiskId === test.risco_id);
+            return (
             <>
+              {/* 1 · Situação atual — como o teste está agora */}
+              <div className="sec-title">Situação Atual</div>
+              <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:12}}>
+                <AlertStatusBadge status={test.last_alert_status}/>
+                {test.trend&&test.trend.length>1&&<Sparkline trend={test.trend}/>}
+                <span style={{fontSize:12,color:"var(--text-muted)",flex:1,minWidth:200}}>{(ALERT_META[test.last_alert_status]||{}).desc||""}</span>
+              </div>
+              <div className="kv-grid" style={{marginBottom:18}}>
+                <div className="kv-item"><span className="kv-lbl">Última Execução</span><span className="kv-val"><FmtRel dt={test.last_run}/>{test.last_result&&<> · <ResultBadge r={test.last_result}/></>}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Achados (última exec.)</span><span className="kv-val" style={{color:(test.last_incident_count||0)>0?"var(--danger)":"var(--success)"}}>{test.last_incident_count!=null?fmtNum(test.last_incident_count):"—"}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Próxima Execução</span><span className="kv-val">{test.status==="ACTIVE"?nextRunLabel(test.frequency):"— (não está ativo)"}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Falsos Positivos Ativos</span><span className="kv-val">{(test.active_fp_count||0)>0?<button className="btn btn-ghost btn-xs" onClick={()=>setTab("achados")}>{fmtNum(test.active_fp_count)} · ver achados</button>:"0"}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Em Tratamento</span><span className="kv-val">{test.has_active_suppression?<button className="btn btn-ghost btn-xs" onClick={()=>setTab("suppressions")}>🔕 apontamento vinculado</button>:"—"}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Alteração Pendente</span><span className="kv-val">{test.has_pending_review?<button className="btn btn-ghost btn-xs" onClick={()=>{setTab("query");setShowDiff(true);}}>⏳ de {(test.pending_submitted_by||"?").split("@")[0]} · ver diff</button>:"—"}</span></div>
+              </div>
+
+              {/* 2 · Risco & contexto — o que o teste vigia */}
+              <div className="sec-title">Risco &amp; Contexto</div>
+              <div className="kv-grid" style={{marginBottom:10}}>
+                <div className="kv-item" style={{gridColumn:"span 2"}}><span className="kv-lbl">Risco Vinculado</span><span className="kv-val">{test.risco_id?<><span style={{fontFamily:"var(--mono)",color:"var(--primary)"}}>{test.risco_id}</span>{risk?.RiskTitle?<span> — {risk.RiskTitle}</span>:null}</>:"—"}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Risco Inerente</span><span className="kv-val"><RiskBadge risk={risk}/></span></div>
+                <div className="kv-item"><span className="kv-lbl">Área Responsável</span><span className="kv-val">{test.responsible_area||"—"}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Categoria</span><span className="kv-val">{test.category||"—"}</span></div>
+              </div>
+              {test.description&&<p style={{fontSize:13,color:"var(--text-muted)",lineHeight:1.65,marginBottom:18}}>{test.description}</p>}
+
+              {/* 3 · Configuração técnica */}
               <div className="sec-title">Configuração</div>
               <div className="kv-grid" style={{marginBottom:18}}>
-                <div className="kv-item"><span className="kv-lbl">Área Responsável</span><span className="kv-val">{test.responsible_area||"—"}</span></div>
-                <div className="kv-item"><span className="kv-lbl">ID do Risco</span><span className="kv-val">{test.risco_id||"—"}</span></div>
-                <div className="kv-item"><span className="kv-lbl">Threshold</span><span className="kv-val">{test.threshold}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Threshold</span><span className="kv-val" title="Nº de achados (já sem falsos positivos) acima do qual a execução vira Flagged">{test.threshold}</span></div>
                 <div className="kv-item"><span className="kv-lbl">Frequência</span><span className="kv-val">{test.frequency}</span></div>
-                <div className="kv-item"><span className="kv-lbl">Notificação</span><span className="kv-val">{test.should_activate_channel?"🔔 Ativa":"🔕 Inativa"}</span></div>
-                <div className="kv-item"><span className="kv-lbl">Ativado em</span><span className="kv-val">{fmt(test.activated_at)}</span></div>
-                <div className="kv-item" style={{gridColumn:"span 3"}}><span className="kv-lbl">Tabela de Achados</span><span className="kv-val" style={{fontFamily:"var(--mono)",fontSize:11}}>sandbox.grc.{test.output_table}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Tipo de Query</span><span className="kv-val" style={{fontFamily:"var(--mono)",fontSize:12}}>{test.query_type}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Notificação Slack</span><span className="kv-val">{test.should_activate_channel?"🔔 Ativa":"🔕 Inativa"}</span></div>
+                <div className="kv-item" style={{gridColumn:"span 2"}}><span className="kv-lbl">Tabela de Achados</span><span className="kv-val" style={{fontFamily:"var(--mono)",fontSize:11}}>{user?.catalog||"…"}.{user?.schema||"…"}.{test.output_table}</span></div>
               </div>
-              {test.description&&<><div className="sec-title">Descrição</div><p style={{fontSize:13,color:"var(--text-muted)",lineHeight:1.65,marginBottom:18}}>{test.description}</p></>}
+
+              {/* 4 · Governança — quem criou, aprovou e mexeu */}
+              <div className="sec-title">Governança</div>
+              <div className="kv-grid" style={{marginBottom:6}}>
+                <div className="kv-item"><span className="kv-lbl">Versão</span><span className="kv-val">v{test.version}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Criado por</span><span className="kv-val" style={{fontSize:12.5}}>{test.created_by||"—"}<div style={{fontSize:10.5,color:"var(--text-subtle)"}}>{fmt(test.created_at)}</div></span></div>
+                <div className="kv-item"><span className="kv-lbl">Aprovado por</span><span className="kv-val" style={{fontSize:12.5}}>{test.reviewed_by||"—"}{test.activated_at&&<div style={{fontSize:10.5,color:"var(--text-subtle)"}}>ativado {fmt(test.activated_at)}</div>}</span></div>
+                <div className="kv-item"><span className="kv-lbl">Última Atualização</span><span className="kv-val"><FmtRel dt={test.updated_at}/></span></div>
+              </div>
               {test.status==="REJECTED"&&test.rejection_reason&&<><div className="divider"/><div className="sec-title" style={{color:"var(--danger)"}}>Motivo da Rejeição</div><p style={{color:"var(--danger)",fontSize:13}}>{test.rejection_reason}</p></>}
             </>
-          )}
+            );
+          })()}
           {tab==="query"&&(
             <>
               {test.has_pending_review && (
@@ -2662,7 +2735,11 @@ function MultiStatusSelect({selected, onChange}) {
 }
 
 // ── TestList ──────────────────────────────────────────────────────────────────
-function TestList({tests, loading, onSelect, onNew}) {
+function TestList({tests, loading, onSelect, onNew, risks}) {
+  const risksArr = Array.isArray(risks) ? risks : (risks?.data || []);
+  const riskMap = {};
+  risksArr.forEach(r => { riskMap[r.RiskId] = r; });
+  const RISK_RANK = {alto:3, medio:2, baixo:1};
   const [search,   setSearch]   = useState("");
   const [statuses, setStatuses] = usePersistedState("ca.testFilter", ["ACTIVE","PAUSED","UNDER_REVIEW","DRAFT","REJECTED"]);
   const [sort,     setSort]     = usePersistedState("ca.testSort", {key:"updated", dir:"desc"});  // U7
@@ -2682,6 +2759,7 @@ function TestList({tests, loading, onSelect, onNew}) {
     incidents: t => t.last_incident_count ?? -1,
     status:    t => t.status || "",
     updated:   t => t.updated_at || "",
+    risk:      t => { const r = riskMap[t.risco_id]; const c = r && r.RiskLevel ? riskLevelClass(r.RiskLevel) : null; return c ? (RISK_RANK[c]||1) : 0; },
   };
   const getv = SORT_GET[sort.key] || SORT_GET.updated;
   const sorted = [...filtered].sort((a,b)=>{
@@ -2713,7 +2791,8 @@ function TestList({tests, loading, onSelect, onNew}) {
           <thead><tr>
             <Th k="name">Teste</Th>
             <Th k="area">Área</Th>
-            <th>Tipo</th><th>Freq.</th>
+            <Th k="risk">Risco</Th>
+            <th>Freq.</th>
             <Th k="last_run">Última Execução</Th>
             <th className="col-trend">Tendência</th>
             <th>Alerta</th>
@@ -2731,7 +2810,7 @@ function TestList({tests, loading, onSelect, onNew}) {
                   {t.category&&<div className="cell-sub">{t.category}</div>}
                 </td>
                 <td style={{fontSize:12.5,color:"var(--text-muted)"}}>{t.responsible_area||"—"}</td>
-                <td><TypeBadge t={t.query_type}/></td>
+                <td><RiskBadge risk={riskMap[t.risco_id]}/></td>
                 <td className="cell-mono">{t.frequency}</td>
                 <td className="cell-mono"><FmtRel dt={t.last_run}/></td>
                 <td className="cell-trend"><Sparkline trend={t.trend}/></td>
@@ -4056,7 +4135,7 @@ function App() {
                     </div>
                   );
                 })()}
-                <TestList tests={tests} loading={loading} onSelect={setDetail} onNew={()=>setEditor({})}/>
+                <TestList tests={tests} loading={loading} risks={risks} onSelect={setDetail} onNew={()=>setEditor({})}/>
               </>
             )}
             {page==="review"&&<ReviewQueue tests={tests} user={user} loading={loading} onApprove={t=>doAction(()=>api.approve(t.test_id),`"${t.test_name}" aprovado ✓`)} onReject={(t,r)=>doAction(()=>api.reject(t.test_id,r),`"${t.test_name}" rejeitado`)}/>}
@@ -4071,7 +4150,7 @@ function App() {
 
       {editor!==null&&<TestEditor test={editor?.test_id?editor:null} risks={risks} areas={areas} onClose={()=>setEditor(null)} onSave={handleSave} saving={saving}/>}
 
-      {detail&&<TestDetail test={detail} user={user} toast={toast} onClone={handleClone} onClose={()=>setDetail(null)} onEdit={t=>{setDetail(null);setEditor(t);}} onPause={t=>doAction(()=>api.pause(t.test_id),`"${t.test_name}" pausado`)} onActivate={t=>doAction(()=>api.activate(t.test_id),`"${t.test_name}" reativado ✓`)} onRequestDelete={(t,reason)=>doAction(()=>api.requestDelete(t.test_id,reason),`Solicitação de exclusão enviada para revisão`)}/>}
+      {detail&&<TestDetail test={detail} user={user} risks={risks} toast={toast} onClone={handleClone} onClose={()=>setDetail(null)} onEdit={t=>{setDetail(null);setEditor(t);}} onPause={t=>doAction(()=>api.pause(t.test_id),`"${t.test_name}" pausado`)} onActivate={t=>doAction(()=>api.activate(t.test_id),`"${t.test_name}" reativado ✓`)} onRequestDelete={(t,reason)=>doAction(()=>api.requestDelete(t.test_id,reason),`Solicitação de exclusão enviada para revisão`)}/>}
 
       <Toasts toasts={toasts} onDismiss={dismissToast}/>
     </>
