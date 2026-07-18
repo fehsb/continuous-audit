@@ -1753,20 +1753,19 @@ def orchestrator_health(user: User = Depends(get_user)):
     out = {"last_run_at": None, "tests_executed": 0, "errors": 0,
            "stale": True, "running": False}
     try:
-        r = db.query(f"""
-            SELECT MAX(ExecutionDate) AS last_run,
-                   COUNT(CASE WHEN DATE(ExecutionDate) =
-                        (SELECT DATE(MAX(ExecutionDate)) FROM {T_EXEC}) THEN 1 END) AS n,
-                   SUM(CASE WHEN DATE(ExecutionDate) =
-                        (SELECT DATE(MAX(ExecutionDate)) FROM {T_EXEC})
-                        AND TestResult = 'ERROR' THEN 1 ELSE 0 END) AS e
-            FROM {T_EXEC}
-        """)[0]
-        out["last_run_at"]    = r["last_run"]
-        out["tests_executed"] = r["n"] or 0
-        out["errors"]         = r["e"] or 0
-        if r["last_run"]:
-            last = datetime.fromisoformat(str(r["last_run"]).replace("Z", ""))
+        last_row = db.query(f"SELECT MAX(ExecutionDate) AS last_run FROM {T_EXEC}")[0]
+        last_run = last_row["last_run"]
+        if last_run:
+            out["last_run_at"] = last_run
+            day = db.query(f"""
+                SELECT COUNT(*) AS n,
+                       SUM(CASE WHEN TestResult = 'ERROR' THEN 1 ELSE 0 END) AS e
+                FROM {T_EXEC}
+                WHERE DATE(ExecutionDate) = DATE(%(d)s)
+            """, {"d": last_run})[0]
+            out["tests_executed"] = day["n"] or 0
+            out["errors"]         = day["e"] or 0
+            last = datetime.fromisoformat(str(last_run).replace("Z", ""))
             out["stale"] = (now_brt() - last).total_seconds() > 26 * 3600
     except Exception:
         pass

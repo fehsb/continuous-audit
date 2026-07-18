@@ -4,6 +4,14 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Auditoria Contínua</title>
+  <script>
+    // Tema: claro por padrão; escuro só se o usuário escolheu. Aplicado antes do
+    // React para não haver flash nem atraso ("auto" legado vira claro).
+    try {
+      var __t = JSON.parse(localStorage.getItem("ca.theme") || '"light"');
+      document.documentElement.dataset.theme = (__t === "dark") ? "dark" : "light";
+    } catch (e) { document.documentElement.dataset.theme = "light"; }
+  </script>
   <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%236366f1'/%3E%3Cstop%20offset='1'%20stop-color='%234f46e5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath%20d='M16%202%2028%207v9c0%207.2-5.1%2012.3-12%2014C9.1%2028.3%204%2023.2%204%2016V7z'%20fill='url(%23g)'/%3E%3Cpath%20d='M8%2017h4l2-5%203%208%202-4h5'%20fill='none'%20stroke='white'%20stroke-width='2.2'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -37,7 +45,7 @@
       --r:10px;--rs:6px;--rl:14px;
       --sh-sm:0 1px 3px rgba(0,0,0,.07);--sh:0 4px 16px rgba(0,0,0,.09);--sh-lg:0 12px 40px rgba(0,0,0,.13);
     }
-    /* ── Tema escuro (D6): auto por SO, com override manual data-theme ── */
+    /* ── Tema escuro (D6): claro por padrão; escuro só por escolha do usuário ── */
     :root[data-theme="dark"]{
       --bg:#0f1017;--surface:#181a24;--surface-alt:#1e2030;
       --border:#2a2d3f;--border-strong:#3a3e55;
@@ -55,26 +63,6 @@
       --chart-grid:rgba(255,255,255,.07);--chart-tick:#9aa0ba;
       --sidebar:#12101f;
       --sh-sm:0 1px 3px rgba(0,0,0,.4);--sh:0 4px 16px rgba(0,0,0,.5);--sh-lg:0 12px 40px rgba(0,0,0,.6);
-    }
-    @media (prefers-color-scheme:dark){
-      :root:not([data-theme="light"]):not([data-theme="dark"]){
-        --bg:#0f1017;--surface:#181a24;--surface-alt:#1e2030;
-        --border:#2a2d3f;--border-strong:#3a3e55;
-        --text:#e8eaf3;--text-muted:#9aa0ba;--text-subtle:#6c7291;
-        --primary:#818cf8;--primary-h:#93a0ff;--primary-soft:#232144;--primary-b:#3b3a6b;
-        --success:#34d399;--success-soft:#11291f;--success-b:#1f5c42;
-        --warning:#fbbf24;--warning-soft:#2a2110;--warning-b:#5c481c;
-        --danger:#f87171;--danger-soft:#2a1517;--danger-b:#5c2a2d;
-        --purple:#a78bfa;--purple-soft:#241d3a;--purple-b:#463a6b;
-        --persist:#fb923c;--persist-soft:#2a1c10;--persist-b:#5c3a1d;
-        --recur:#fb7185;--recur-soft:#2a141c;--recur-b:#5c2338;
-        --treat:#60a5fa;--treat-soft:#12213a;--treat-b:#24406b;
-        --fp-row:#2a2110;--hl-mark:#4a3f14;--row-hover:#1c1e2c;--panel-soft:#1a1c28;
-        --code-bg:#151723;--code-focus:#182030;--code-imp:#b7a4f7;--code-qry:#7dd3ad;
-        --chart-grid:rgba(255,255,255,.07);--chart-tick:#9aa0ba;
-        --sidebar:#12101f;
-        --sh-sm:0 1px 3px rgba(0,0,0,.4);--sh:0 4px 16px rgba(0,0,0,.5);--sh-lg:0 12px 40px rgba(0,0,0,.6);
-      }
     }
     body{font-family:var(--font);font-size:14px;line-height:1.5;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased}
     ::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}
@@ -99,6 +87,27 @@
     .nav-badge{margin-left:auto;background:#ef4444;color:#fff;font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:20px;flex-shrink:0;transition:opacity .2s}
     .sidebar.collapsed .nav-badge{opacity:0}
     .sidebar-footer{padding:8px 6px;border-top:1px solid rgba(255,255,255,.06)}
+    /* Recolhida: nada é cortado — hamburger centrado, logo/e-mail somem, ícones centram */
+    .sidebar.collapsed .sidebar-top{justify-content:center;padding:14px 6px;gap:0}
+    .sidebar.collapsed .brand-mark{display:none!important}
+    .sidebar.collapsed .nav-item{justify-content:center;gap:0;padding:8px 6px}
+    .sidebar.collapsed .user-pill{display:none}
+    .sidebar.collapsed .theme-btn{justify-content:center!important;gap:0!important;padding:7px 0!important}
+    .sidebar.collapsed .theme-btn .nav-label{display:none}
+    /* Mobile: sidebar vira trilho de ícones (mesmo tratamento da recolhida) */
+    @media (max-width:760px){
+      .sidebar{width:var(--sidebar-w-collapsed)}
+      .sidebar .sidebar-top{justify-content:center;padding:14px 6px;gap:0}
+      .sidebar .brand-mark{display:none!important}
+      .sidebar .brand-text{opacity:0;width:0}
+      .sidebar .nav-item{justify-content:center;gap:0;padding:8px 6px}
+      .sidebar .nav-label{opacity:0;width:0}
+      .sidebar .nav-badge{opacity:0;display:none}
+      .sidebar .user-pill{display:none}
+      .sidebar .theme-btn{justify-content:center!important;gap:0!important;padding:7px 0!important}
+      .sidebar .theme-btn .nav-label{display:none}
+      .topbar{padding:0 12px;gap:8px}
+    }
     .user-pill{padding:7px 10px;border-radius:var(--rs);background:rgba(255,255,255,.06);overflow:hidden}
     .user-email{font-size:11px;color:rgba(255,255,255,.5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:opacity .2s}
     .sidebar.collapsed .user-email{opacity:0}
@@ -326,13 +335,28 @@
 const { useState, useEffect, useCallback, useRef } = React;
 
 // ── Shared hooks ─────────────────────────────────────────────────────────────
-// Close a modal on Escape (#5)
+// Close a modal on Escape (#5). Uses a mount-ordered stack so Esc only closes
+// the TOPMOST open modal — a nested confirm no longer drags its parent along.
+const __escStack = [];
 function useEscToClose(onClose) {
+  const cbRef = useRef(onClose);
+  cbRef.current = onClose;
   useEffect(() => {
-    const fn = e => { if (e.key === "Escape") onClose(); };
+    const entry = {};
+    __escStack.push(entry);
+    const fn = e => {
+      if (e.key === "Escape" && __escStack[__escStack.length - 1] === entry) {
+        e.stopPropagation();
+        cbRef.current();
+      }
+    };
     document.addEventListener("keydown", fn);
-    return () => document.removeEventListener("keydown", fn);
-  }, [onClose]);
+    return () => {
+      document.removeEventListener("keydown", fn);
+      const i = __escStack.indexOf(entry);
+      if (i >= 0) __escStack.splice(i, 1);
+    };
+  }, []);
 }
 // useState backed by localStorage (#8)
 function usePersistedState(key, initial) {
@@ -3731,7 +3755,7 @@ function App() {
   const [orchHealth, setOrchHealth] = useState(null);              // X1
   const [runCooldown, setRunCooldown] = useState(false);           // F9
   const [coldTry, setColdTry] = useState(0);                       // U3
-  const [theme, setTheme] = usePersistedState("ca.theme", "auto"); // D6
+  const [theme, setTheme] = usePersistedState("ca.theme", "light"); // D6 — claro por padrão
 
   // U3 — banner do cold start (req() notifica as tentativas)
   useEffect(() => {
@@ -3739,11 +3763,21 @@ function App() {
     return () => { window.__caCold.notify = () => {}; };
   }, []);
 
-  // D6 — aplica o tema no <html> e avisa os gráficos
-  useEffect(() => {
-    const el = document.documentElement;
-    if (theme === "auto") delete el.dataset.theme; else el.dataset.theme = theme;
+  // D6 — dois estados (claro/escuro). O clique aplica no DOM na hora (sem esperar
+  // o ciclo do React) e o estado persiste; gráficos re-renderizam via evento.
+  const isDark = theme === "dark";
+  const applyTheme = useCallback(next => {
+    document.documentElement.dataset.theme = next;      // imediato
     window.dispatchEvent(new Event("ca-theme"));
+    setTheme(next);                                      // persiste
+  }, [setTheme]);
+  useEffect(() => {  // normaliza valor legado ("auto") e garante consistência
+    const norm = theme === "dark" ? "dark" : "light";
+    if (document.documentElement.dataset.theme !== norm) {
+      document.documentElement.dataset.theme = norm;
+      window.dispatchEvent(new Event("ca-theme"));
+    }
+    if (norm !== theme) setTheme(norm);
   }, [theme]);
 
   const dismissToast = useCallback(id=>setToasts(p=>p.filter(t=>t.id!==id)),[]);
@@ -3886,7 +3920,7 @@ function App() {
                 <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
               </svg>
             </button>
-            <BrandMark size={24}/>
+            <span className="brand-mark" style={{display:"flex"}}><BrandMark size={24}/></span>
             <div className="brand-text">
               <div className="brand-title">Auditoria Contínua</div>
             </div>
@@ -3903,13 +3937,13 @@ function App() {
           </nav>
 
           <div className="sidebar-footer">
-            <button onClick={()=>setTheme(t=>t==="auto"?"dark":t==="dark"?"light":"auto")}
-              title={`Tema: ${theme==="auto"?"automático":theme==="dark"?"escuro":"claro"} — clique para alternar`}
+            <button className="theme-btn" onClick={()=>applyTheme(isDark?"light":"dark")}
+              title={isDark?"Mudar para o tema claro":"Mudar para o tema escuro"}
               style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 10px",marginBottom:6,
                 background:"none",border:"none",cursor:"pointer",borderRadius:"var(--rs)",
                 color:"rgba(255,255,255,.55)",fontSize:12,fontFamily:"var(--font)"}}>
-              <Icon name={theme==="dark"?"moon":"sun"} size={14}/>
-              <span className="nav-label">{theme==="auto"?"Tema automático":theme==="dark"?"Tema escuro":"Tema claro"}</span>
+              <Icon name={isDark?"sun":"moon"} size={14}/>
+              <span className="nav-label">{isDark?"Tema claro":"Tema escuro"}</span>
             </button>
             {user&&<div className="user-pill"><div className="user-email">{user.email}</div></div>}
           </div>
