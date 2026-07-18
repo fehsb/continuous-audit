@@ -1126,6 +1126,8 @@ df_incidents = spark.createDataFrame(incidents, schema=incident_schema) if incid
 > Esse teste possui o objetivo de identificar os funcionários da CERC que também constam como sócios em empresas ativas no sistema do Publica, cruzando informações do cadastro interno de colaboradores com os registros públicos de empresas e sócios. O teste permite detectar possíveis conflitos de interesse ou sobreposição de funções entre a atuação como empregado e participação societária em empresas externas.
 
 ```python
+from functools import reduce
+
 exceptions = [
     ("MARIO MELLO FREIRE NETO", "BANCO J. SAFRA S.A"),
     ("FATIMA CAROLINA GILBERTO RIOS PEREIRA", "ANTECIPA S/A"),
