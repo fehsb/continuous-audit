@@ -1,5 +1,7 @@
+import csv
 import hashlib
 import ast
+import io
 import json
 import os
 import re
@@ -7,8 +9,9 @@ import time
 import uuid
 from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -19,6 +22,16 @@ import validation
 # ─────────────────────────────────────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────────────────────────────────────
+# All timestamps are recorded in Brasília time (F8) — the warehouse session is
+# also pinned to America/Sao_Paulo in db.py, so SQL date functions agree.
+BRT = ZoneInfo("America/Sao_Paulo")
+
+
+def now_brt() -> datetime:
+    return datetime.now(BRT).replace(tzinfo=None)
+
+
+
 # Environment-driven so the same code serves sandbox and production.
 # Override CA_CATALOG / CA_SCHEMA in app.yaml to flip environments.
 CATALOG = os.getenv("CA_CATALOG", "sandbox")
@@ -214,7 +227,7 @@ def _insert_history(test_id, test_name, version, query_type, imports,
         "query_type": query_type, "imports": imports or "",
         "query_code": query_code, "status_before": status_before,
         "status_after": status_after, "changed_by": changed_by,
-        "changed_at": datetime.utcnow(), "change_type": change_type,
+        "changed_at": now_brt(), "change_type": change_type,
         "comment": comment,
     })
 
@@ -543,8 +556,10 @@ def search_risk_entries(q: str = "", open_only: bool = True, user: User = Depend
     """Search risk entries by RiskEntryId or title. open_only=True filters to open entries."""
     try:
         where_clauses = []
+        params = {}
         if q:
-            where_clauses.append(f"(RiskEntryId LIKE '%{q}%' OR RiskEntryTitle LIKE '%{q}%')")
+            where_clauses.append("(RiskEntryId LIKE %(q)s OR RiskEntryTitle LIKE %(q)s)")
+            params["q"] = f"%{q}%"
         if open_only:
             where_clauses.append("(ClosingDate IS NULL OR TRIM(COALESCE(ClosingDate,'')) = '')")
         where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
@@ -555,7 +570,7 @@ def search_risk_entries(q: str = "", open_only: bool = True, user: User = Depend
             {where}
             ORDER BY RiskEntryId
             LIMIT 50
-        """)
+        """, params)
     except Exception as e:
         return {"error": f"[{T_ENTRIES}] {str(e)}", "data": []}
 
@@ -589,7 +604,7 @@ def list_suppressions(test_id: str, user: User = Depends(get_user)):
 @app.post("/api/tests/{test_id}/suppressions", status_code=201)
 def create_suppression(test_id: str, body: SuppressionIn, user: User = Depends(get_user)):
     test = _require_test(test_id)
-    now  = datetime.utcnow()
+    now  = now_brt()
     suppression_id = str(uuid.uuid4())
     db.execute(f"""
         INSERT INTO {T_SUPPRESSIONS}
@@ -657,10 +672,31 @@ def run_preview(body: RunPreviewIn, user: User = Depends(get_user)):
 # ─────────────────────────────────────────────────────────────────────────────
 # Routes — tests
 # ─────────────────────────────────────────────────────────────────────────────
+def _attach_trends(rows: list) -> list:
+    """X2 — attach the last 14 runs (date, count, result) to each test as `trend`."""
+    try:
+        trows = db.query(f"""
+            SELECT TestName, ExecutionDate, IncidentCount, TestResult FROM (
+                SELECT TestName, ExecutionDate, IncidentCount, TestResult,
+                    ROW_NUMBER() OVER (PARTITION BY TestName ORDER BY ExecutionDate DESC) AS rn
+                FROM {T_EXEC}
+            ) WHERE rn <= 14
+        """)
+    except Exception:
+        trows = []
+    trends: dict = {}
+    for t in trows:
+        trends.setdefault(t["TestName"], []).append(
+            {"d": t["ExecutionDate"], "n": t["IncidentCount"] or 0, "r": t["TestResult"]})
+    for row in rows:
+        row["trend"] = list(reversed(trends.get(row.get("test_name"), [])))
+    return rows
+
+
 @app.get("/api/tests")
 def list_tests(user: User = Depends(get_user)):
     try:
-        return db.query(f"""
+        return _attach_trends(db.query(f"""
             SELECT
                 c.*,
                 lr.TestResult    AS last_result,
@@ -696,7 +732,7 @@ def list_tests(user: User = Depends(get_user)):
                 GROUP BY test_name
             ) fp_agg ON fp_agg.test_name = c.test_name
             ORDER BY c.updated_at DESC
-        """)
+        """))
     except Exception as e1:
         # Fallback: simple query without suppression join
         try:
@@ -752,12 +788,17 @@ def get_history(test_id: str, user: User = Depends(get_user)):
 
 
 @app.get("/api/tests/{test_id}/executions")
-def get_executions(test_id: str, user: User = Depends(get_user)):
+def get_executions(test_id: str, offset: int = 0, limit: int = 20, user: User = Depends(get_user)):
+    """U6 — paginated: fetches limit+1 to signal whether there are more pages."""
     test = _require_test(test_id)
-    return db.query(
-        f"SELECT * FROM {T_EXEC} WHERE TestName = %(name)s ORDER BY ExecutionDate DESC LIMIT 20",
+    limit  = max(1, min(limit, 100))
+    offset = max(0, offset)
+    rows = db.query(
+        f"SELECT * FROM {T_EXEC} WHERE TestName = %(name)s "
+        f"ORDER BY ExecutionDate DESC LIMIT {limit + 1} OFFSET {offset}",
         {"name": test["test_name"]}
     )
+    return {"items": rows[:limit], "has_more": len(rows) > limit}
 
 
 def _row_hash(row: dict) -> str:
@@ -918,6 +959,98 @@ def get_incidents(
         raise HTTPException(400, f"Erro ao consultar achados: {str(e)}")
 
 
+@app.get("/api/tests/{test_id}/incidents/export")
+def export_incidents(
+    test_id:   str,
+    date_from: Optional[str] = None,
+    date_to:   Optional[str] = None,
+    search:    Optional[str] = None,
+    all_dates: bool = False,
+    user: User = Depends(get_user),
+):
+    """X3 — CSV export honoring the same filters as the Achados screen.
+    UTF-8 BOM + ';' delimiter so Excel pt-BR opens it correctly."""
+    test = _require_test(test_id)
+    table = _safe_table_name(test["output_table"])
+    full_table = f"{CATALOG}.{SCHEMA}.{table}"
+    search = (search or "").strip()
+    try:
+        params: dict = {}
+        if all_dates:
+            date_filter = "1=1"
+        elif date_from and date_to:
+            date_filter = "DATE(ArchiveDate) BETWEEN %(date_from)s AND %(date_to)s"
+            params["date_from"] = date_from; params["date_to"] = date_to
+        elif date_from:
+            date_filter = "DATE(ArchiveDate) >= %(date_from)s"; params["date_from"] = date_from
+        elif date_to:
+            date_filter = "DATE(ArchiveDate) <= %(date_to)s"; params["date_to"] = date_to
+        elif search:
+            date_filter = "1=1"
+        else:
+            date_filter = f"DATE(ArchiveDate) = (SELECT DATE(MAX(ArchiveDate)) FROM {full_table})"
+
+        search_where = ""
+        if search:
+            try:
+                probe = db.query(f"SELECT * FROM {full_table} LIMIT 1")
+                scols = [c for c in (probe[0].keys() if probe else [])
+                         if c != "ArchiveDate" and not c.startswith("_")]
+            except Exception:
+                scols = []
+            if scols:
+                concat = "concat_ws(' ', " + ", ".join(f"CAST(`{c}` AS STRING)" for c in scols) + ")"
+                search_where = f"AND lower({concat}) LIKE lower(%(q)s)"
+                params["q"] = f"%{search}%"
+
+        rows = db.query(f"""
+            SELECT * FROM {full_table}
+            WHERE {date_filter} {search_where}
+            ORDER BY ArchiveDate DESC
+            LIMIT 10000
+        """, params)
+
+        # FP flag per row (criteria first, legacy hash as fallback)
+        try:
+            fp_rows = db.query(
+                f"SELECT row_hash, match_criteria FROM {CATALOG}.{SCHEMA}.tb_false_positives "
+                f"WHERE test_name = %(n)s AND active = true", {"n": test["test_name"]})
+        except Exception:
+            fp_rows = []
+        fps = []
+        for fr in fp_rows:
+            crit = None
+            if fr.get("match_criteria"):
+                try:
+                    crit = json.loads(fr["match_criteria"])
+                except Exception:
+                    crit = None
+            fps.append({**fr, "_criteria": crit})
+
+        cols = [c for c in (rows[0].keys() if rows else []) if not c.startswith("_")]
+        buf = io.StringIO()
+        writer = csv.writer(buf, delimiter=";", lineterminator="\r\n")
+        writer.writerow(cols + ["FalsoPositivo"])
+        for row in rows:
+            rh = _row_hash(row)
+            is_fp = any(
+                (fp["_criteria"] and _row_matches_criteria(row, fp["_criteria"])) or
+                (not fp["_criteria"] and fp.get("row_hash") == rh)
+                for fp in fps
+            )
+            writer.writerow([("" if row.get(c) is None else str(row.get(c))) for c in cols]
+                            + ["Sim" if is_fp else "Não"])
+
+        fname = f"{test['test_name']}_{now_brt().strftime('%Y%m%d')}.csv"
+        return Response(
+            content="\ufeff" + buf.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    except Exception as e:
+        raise HTTPException(400, f"Erro ao exportar achados: {str(e)}")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Routes — create / edit
 # ─────────────────────────────────────────────────────────────────────────────
@@ -941,9 +1074,28 @@ def _validate_required_fields(body: TestIn, submit: bool):
         raise HTTPException(400, " | ".join(errors))
 
 
+def _check_name_table_unique(test_name: str, output_table: str, exclude_id: str = None):
+    """F3 — reject duplicated test_name/output_table among non-cancelled tests."""
+    try:
+        rows = db.query(f"""
+            SELECT test_id, test_name, output_table FROM {T_CFG}
+            WHERE status != 'CANCELLED'
+              AND (lower(test_name) = lower(%(n)s) OR lower(output_table) = lower(%(t)s))
+        """, {"n": test_name, "t": output_table})
+    except Exception:
+        return  # never let the uniqueness probe itself block creation
+    for r in rows:
+        if exclude_id and r["test_id"] == exclude_id:
+            continue
+        if (r["test_name"] or "").lower() == test_name.lower():
+            raise HTTPException(400, f"Já existe um teste com este nome: {r['test_name']}")
+        raise HTTPException(400, f"A tabela de achados '{output_table}' já é usada pelo teste '{r['test_name']}'")
+
+
 @app.post("/api/tests", status_code=201)
 def create_test(body: TestIn, submit: bool = False, user: User = Depends(get_user)):
     _validate_required_fields(body, submit)
+    _check_name_table_unique(body.test_name, body.output_table)
     if submit:
         try:
             validation.validate(body.query_type, body.imports, body.query_code)
@@ -951,7 +1103,7 @@ def create_test(body: TestIn, submit: bool = False, user: User = Depends(get_use
             raise HTTPException(400, str(e))
 
     test_id = str(uuid.uuid4())
-    now     = datetime.utcnow()
+    now     = now_brt()
     status  = "UNDER_REVIEW" if submit else "DRAFT"
 
     db.execute(f"""
@@ -989,18 +1141,26 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
     test = _require_test(test_id)
 
     # DRAFT/REJECTED: full edit, freely (draft or submit for review)
-    # ACTIVE: any change becomes a PENDING edit that requires approval — the approved
-    #         (live) version keeps running until a reviewer approves the change (#1)
+    # ACTIVE/PAUSED (F6): any change becomes a PENDING edit that requires approval —
+    #         the approved (live) version keeps running until a reviewer approves it
     # Other statuses: not editable
-    if test["status"] not in ("DRAFT", "REJECTED", "ACTIVE"):
+    if test["status"] not in ("DRAFT", "REJECTED", "ACTIVE", "PAUSED"):
         raise HTTPException(400, f"Testes com status '{test['status']}' não podem ser editados")
 
-    now = datetime.utcnow()
-    is_active = test["status"] == "ACTIVE"
+    now = now_brt()
+    is_live = test["status"] in ("ACTIVE", "PAUSED")
 
-    # ── ACTIVE: stage a pending change; never touch the live version ──────────────
-    if is_active:
-        # An edit to an active test always goes to review, so enforce full validation.
+    # ── ACTIVE/PAUSED: stage a pending change; never touch the live version ───────
+    if is_live:
+        # F5 — don't silently overwrite someone else's staged proposal.
+        if test.get("has_pending_review") and test.get("pending_submitted_by") \
+                and test["pending_submitted_by"] != user.email:
+            raise HTTPException(
+                409,
+                f"Já existe uma alteração pendente de {test['pending_submitted_by']}. "
+                "Rejeite-a na fila de revisão ou aguarde a decisão do revisor."
+            )
+        # An edit to a live test always goes to review, so enforce full validation.
         _validate_required_fields(body, submit=True)
         try:
             validation.validate(body.query_type, body.imports, body.query_code)
@@ -1034,12 +1194,13 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
             "by": user.email, "now": now, "test_id": test_id,
         })
         _insert_history(test_id, test["test_name"], test["version"], body.query_type,
-                        body.imports, body.query_code, "ACTIVE", "ACTIVE",
+                        body.imports, body.query_code, test["status"], test["status"],
                         "EDITED_PENDING_REVIEW", user.email)
-        return {"test_id": test_id, "status": "ACTIVE", "pending_review": True}
+        return {"test_id": test_id, "status": test["status"], "pending_review": True}
 
     # ── DRAFT/REJECTED: edit the row directly ────────────────────────────────────
     _validate_required_fields(body, submit)
+    _check_name_table_unique(body.test_name, body.output_table, exclude_id=test_id)
     if submit:
         try:
             validation.validate(body.query_type, body.imports, body.query_code)
@@ -1088,15 +1249,101 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
     return {"test_id": test_id, "status": status}
 
 
+@app.post("/api/tests/{test_id}/clone", status_code=201)
+def clone_test(test_id: str, user: User = Depends(get_user)):
+    """X5 — duplicate a test as a DRAFT owned by the current user."""
+    src = _require_test(test_id)
+    if src["status"] == "CANCELLED":
+        raise HTTPException(400, "Testes cancelados não podem ser duplicados")
+
+    def _free(base: str, sep: str) -> str:
+        cand = f"{base}{sep}copy"
+        for i in range(2, 30):
+            try:
+                hit = db.query(
+                    f"SELECT 1 FROM {T_CFG} WHERE status != 'CANCELLED' "
+                    "AND (lower(test_name) = lower(%(c)s) OR lower(output_table) = lower(%(c)s)) LIMIT 1",
+                    {"c": cand})
+            except Exception:
+                hit = []
+            if not hit:
+                return cand
+            cand = f"{base}{sep}copy{sep}{i}"
+        return f"{base}{sep}copy{sep}{uuid.uuid4().hex[:6]}"
+
+    new_name  = _free(src["test_name"], "-")
+    new_table = _free(src["output_table"], "_")
+    new_id    = str(uuid.uuid4())
+    now       = now_brt()
+
+    db.execute(f"""
+        INSERT INTO {T_CFG} (
+            test_id, test_name, output_table, description, responsible_area,
+            risco_id, threshold, frequency, query_type, imports, query_code,
+            status, category, created_by, created_at, updated_at, version,
+            should_activate_channel
+        ) VALUES (
+            %(test_id)s, %(test_name)s, %(output_table)s, %(description)s,
+            %(responsible_area)s, %(risco_id)s, %(threshold)s, %(frequency)s,
+            %(query_type)s, %(imports)s, %(query_code)s, 'DRAFT',
+            %(category)s, %(created_by)s, %(now)s, %(now)s, 1,
+            %(should_activate_channel)s
+        )
+    """, {
+        "test_id": new_id, "test_name": new_name, "output_table": new_table,
+        "description": src.get("description"), "responsible_area": src.get("responsible_area"),
+        "risco_id": src.get("risco_id"), "threshold": src.get("threshold") or 0,
+        "frequency": src.get("frequency") or "DAILY", "query_type": src.get("query_type"),
+        "imports": src.get("imports") or "", "query_code": src.get("query_code"),
+        "category": src.get("category") or "", "created_by": user.email, "now": now,
+        "should_activate_channel": bool(src.get("should_activate_channel", True)),
+    })
+    _insert_history(new_id, new_name, 1, src.get("query_type"), src.get("imports"),
+                    src.get("query_code"), None, "DRAFT", "CREATED", user.email,
+                    f"Clonado de {src['test_name']} v{src.get('version') or 1}")
+    return {"test_id": new_id, "test_name": new_name, "status": "DRAFT"}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Routes — state transitions
 # ─────────────────────────────────────────────────────────────────────────────
+_CLEAR_PENDING_SQL = """
+                has_pending_review              = false,
+                pending_query_type              = NULL,
+                pending_imports                 = NULL,
+                pending_query_code              = NULL,
+                pending_threshold               = NULL,
+                pending_frequency               = NULL,
+                pending_description             = NULL,
+                pending_responsible_area        = NULL,
+                pending_risco_id                = NULL,
+                pending_category                = NULL,
+                pending_should_activate_channel = NULL,
+                pending_submitted_by            = NULL,
+                pending_submitted_at            = NULL
+"""
+
+
 @app.post("/api/tests/{test_id}/approve")
 def approve_test(test_id: str, user: User = Depends(get_user)):
     test = _require_test(test_id)
-    now = datetime.utcnow()
+    now = now_brt()
 
-    # Pending edit on an ACTIVE test → promote the proposed version into the live one.
+    # F2: a deletion request takes precedence over a pending edit — approving it
+    # cancels the test and discards any staged proposal.
+    if test["status"] == "PENDING_DELETE":
+        if test["created_by"] == user.email and user.email not in SELF_REVIEW_ALLOWED:
+            raise HTTPException(403, "Você não pode aprovar um teste que criou")
+        db.execute(f"""
+            UPDATE {T_CFG} SET status='CANCELLED', reviewed_by=%(r)s, updated_at=%(n)s,
+            {_CLEAR_PENDING_SQL}
+            WHERE test_id=%(id)s
+        """, {"r": user.email, "n": now, "id": test_id})
+        _insert_history(test_id, test["test_name"], test["version"], test["query_type"],
+                        test["imports"], test["query_code"], "PENDING_DELETE", "CANCELLED", "APPROVED", user.email)
+        return {"status": "CANCELLED"}
+
+    # Pending edit on an ACTIVE/PAUSED test → promote the proposed version into the live one.
     if test.get("has_pending_review"):
         submitter = test.get("pending_submitted_by")
         if submitter == user.email and user.email not in SELF_REVIEW_ALLOWED:
@@ -1135,21 +1382,14 @@ def approve_test(test_id: str, user: User = Depends(get_user)):
         """, {"v": new_version, "r": user.email, "n": now, "id": test_id})
         _insert_history(test_id, test["test_name"], new_version,
                         test.get("pending_query_type"), test.get("pending_imports"),
-                        test.get("pending_query_code"), "ACTIVE", "ACTIVE",
+                        test.get("pending_query_code"), test["status"], test["status"],
                         "APPROVED", user.email)
-        return {"status": "ACTIVE", "promoted": True}
+        return {"status": test["status"], "promoted": True}
 
-    if test["status"] not in ("UNDER_REVIEW", "PENDING_DELETE"):
+    if test["status"] != "UNDER_REVIEW":
         raise HTTPException(400, "Status inválido para aprovação")
     if test["created_by"] == user.email and user.email not in SELF_REVIEW_ALLOWED:
         raise HTTPException(403, "Você não pode aprovar um teste que criou")
-
-    if test["status"] == "PENDING_DELETE":
-        db.execute(f"UPDATE {T_CFG} SET status='CANCELLED', reviewed_by=%(r)s, updated_at=%(n)s WHERE test_id=%(id)s",
-                   {"r": user.email, "n": now, "id": test_id})
-        _insert_history(test_id, test["test_name"], test["version"], test["query_type"],
-                        test["imports"], test["query_code"], "PENDING_DELETE", "CANCELLED", "APPROVED", user.email)
-        return {"status": "CANCELLED"}
 
     db.execute(f"UPDATE {T_CFG} SET status='ACTIVE', reviewed_by=%(r)s, activated_at=%(n)s, updated_at=%(n)s WHERE test_id=%(id)s",
                {"r": user.email, "n": now, "id": test_id})
@@ -1161,49 +1401,48 @@ def approve_test(test_id: str, user: User = Depends(get_user)):
 @app.post("/api/tests/{test_id}/reject")
 def reject_test(test_id: str, body: RejectIn, user: User = Depends(get_user)):
     test = _require_test(test_id)
-    now  = datetime.utcnow()
+    now  = now_brt()
+
+    # F2: rejecting a deletion request comes first — test returns to ACTIVE and a
+    # pending edit (if any) stays intact in the review queue.
+    if test["status"] == "PENDING_DELETE":
+        if test["created_by"] == user.email and user.email not in SELF_REVIEW_ALLOWED:
+            raise HTTPException(403, "Você não pode rejeitar um teste que criou")
+        db.execute(f"UPDATE {T_CFG} SET status='ACTIVE', reviewed_by=%(r)s, updated_at=%(n)s WHERE test_id=%(id)s",
+                   {"r": user.email, "n": now, "id": test_id})
+        _insert_history(test_id, test["test_name"], test["version"], test["query_type"],
+                        test["imports"], test["query_code"], "PENDING_DELETE", "ACTIVE",
+                        "REJECTED", user.email, body.reason)
+        return {"status": "ACTIVE"}
 
     # Reject a pending edit → discard the proposal; the live version keeps running.
+    # F7: the reason lives only in history — the live row is not "stained".
     if test.get("has_pending_review"):
         submitter = test.get("pending_submitted_by")
         if submitter == user.email and user.email not in SELF_REVIEW_ALLOWED:
             raise HTTPException(403, "Você não pode rejeitar uma alteração que submeteu")
         db.execute(f"""
             UPDATE {T_CFG} SET
-                has_pending_review              = false,
-                pending_query_type              = NULL,
-                pending_imports                 = NULL,
-                pending_query_code              = NULL,
-                pending_threshold               = NULL,
-                pending_frequency               = NULL,
-                pending_description             = NULL,
-                pending_responsible_area        = NULL,
-                pending_risco_id                = NULL,
-                pending_category                = NULL,
-                pending_should_activate_channel = NULL,
-                pending_submitted_by            = NULL,
-                pending_submitted_at            = NULL,
-                rejection_reason                = %(rr)s,
-                reviewed_by                     = %(r)s,
-                updated_at                      = %(n)s
+            {_CLEAR_PENDING_SQL},
+                reviewed_by = %(r)s,
+                updated_at  = %(n)s
             WHERE test_id = %(id)s
-        """, {"rr": body.reason, "r": user.email, "n": now, "id": test_id})
+        """, {"r": user.email, "n": now, "id": test_id})
         _insert_history(test_id, test["test_name"], test["version"], test["query_type"],
-                        test["imports"], test["query_code"], "ACTIVE", "ACTIVE",
+                        test["imports"], test["query_code"], test["status"], test["status"],
                         "REJECTED", user.email, body.reason)
-        return {"status": "ACTIVE", "pending_rejected": True}
+        return {"status": test["status"], "pending_rejected": True}
 
-    if test["status"] not in ("UNDER_REVIEW", "PENDING_DELETE"):
+    if test["status"] != "UNDER_REVIEW":
         raise HTTPException(400, "Status inválido para rejeição")
     if test["created_by"] == user.email and user.email not in SELF_REVIEW_ALLOWED:
         raise HTTPException(403, "Você não pode rejeitar um teste que criou")
 
-    new_status = "ACTIVE" if test["status"] == "PENDING_DELETE" else "REJECTED"
-    db.execute(f"UPDATE {T_CFG} SET status=%(s)s, reviewed_by=%(r)s, rejection_reason=%(rr)s, updated_at=%(n)s WHERE test_id=%(id)s",
-               {"s": new_status, "r": user.email, "rr": body.reason, "n": now, "id": test_id})
+    db.execute(f"UPDATE {T_CFG} SET status='REJECTED', reviewed_by=%(r)s, rejection_reason=%(rr)s, updated_at=%(n)s WHERE test_id=%(id)s",
+               {"r": user.email, "rr": body.reason, "n": now, "id": test_id})
     _insert_history(test_id, test["test_name"], test["version"], test["query_type"],
-                    test["imports"], test["query_code"], test["status"], new_status, "REJECTED", user.email, body.reason)
-    return {"status": new_status}
+                    test["imports"], test["query_code"], test["status"], "REJECTED", "REJECTED", user.email, body.reason)
+    return {"status": "REJECTED"}
 
 
 @app.post("/api/tests/{test_id}/request-delete")
@@ -1218,7 +1457,7 @@ def request_delete(test_id: str, body: RejectIn, user: User = Depends(get_user))
     if test["status"] not in ("ACTIVE", "PAUSED", "REJECTED", "DRAFT"):
         raise HTTPException(400, f"Testes com status '{test['status']}' não podem ser excluídos")
 
-    now = datetime.utcnow()
+    now = now_brt()
 
     # REJECTED and DRAFT: cancel directly, no approval needed
     if test["status"] in ("REJECTED", "DRAFT"):
@@ -1243,7 +1482,7 @@ def pause_test(test_id: str, user: User = Depends(get_user)):
     test = _require_test(test_id)
     if test["status"] != "ACTIVE":
         raise HTTPException(400, "Apenas testes ACTIVE podem ser pausados")
-    now = datetime.utcnow()
+    now = now_brt()
     db.execute(f"UPDATE {T_CFG} SET status='PAUSED', updated_at=%(n)s WHERE test_id=%(id)s", {"n": now, "id": test_id})
     _insert_history(test_id, test["test_name"], test["version"], test["query_type"],
                     test["imports"], test["query_code"], "ACTIVE", "PAUSED", "PAUSED", user.email)
@@ -1255,7 +1494,7 @@ def activate_test(test_id: str, user: User = Depends(get_user)):
     test = _require_test(test_id)
     if test["status"] != "PAUSED":
         raise HTTPException(400, "Apenas testes PAUSED podem ser reativados")
-    now = datetime.utcnow()
+    now = now_brt()
     db.execute(f"UPDATE {T_CFG} SET status='ACTIVE', updated_at=%(n)s WHERE test_id=%(id)s", {"n": now, "id": test_id})
     _insert_history(test_id, test["test_name"], test["version"], test["query_type"],
                     test["imports"], test["query_code"], "PAUSED", "ACTIVE", "REACTIVATED", user.email)
@@ -1329,7 +1568,7 @@ def _log_fp_history(fp_id: str, test_name: str, row_hash: str,
     """Insert a history event. Creates the table on first use if it doesn't exist yet."""
     params = {"hid": str(uuid.uuid4()), "fid": fp_id, "et": event_type,
               "tn": test_name, "rh": row_hash, "rd": row_data_json,
-              "note": note, "actor": actor, "now": datetime.utcnow()}
+              "note": note, "actor": actor, "now": now_brt()}
     try:
         db.execute(_FP_HISTORY_INSERT, params)
     except Exception:
@@ -1372,7 +1611,7 @@ def mark_false_positive(body: FalsePositiveIn, user: User = Depends(get_user)):
     params = {
         "id": fp_id, "tn": body.test_name, "rh": body.row_hash,
         "mc": json.dumps(criteria, ensure_ascii=False),
-        "by": user.email, "now": datetime.utcnow(), "note": body.note or "",
+        "by": user.email, "now": now_brt(), "note": body.note or "",
     }
     try:
         db.execute(_FP_INSERT, params)
@@ -1494,10 +1733,53 @@ def run_orchestrator(user: User = Depends(get_user)):
     try:
         from databricks.sdk import WorkspaceClient
         w = WorkspaceClient()
+        # F9 — refuse to double-trigger while a run is already in flight.
+        try:
+            active = list(w.jobs.list_runs(job_id=int(ORCHESTRATOR_JOB_ID),
+                                           active_only=True, limit=1))
+            if active:
+                return {"status": "already_running", "run_id": active[0].run_id}
+        except Exception:
+            pass  # if the probe fails, fall through and trigger normally
         run = w.jobs.run_now(job_id=int(ORCHESTRATOR_JOB_ID))
         return {"status": "triggered", "run_id": run.run_id}
     except Exception as e:
         raise HTTPException(500, f"Erro ao disparar orquestrador: {str(e)}")
+
+
+@app.get("/api/orchestrator-health")
+def orchestrator_health(user: User = Depends(get_user)):
+    """X1 — health card: when the daily job last ran, how many tests, how many errors."""
+    out = {"last_run_at": None, "tests_executed": 0, "errors": 0,
+           "stale": True, "running": False}
+    try:
+        r = db.query(f"""
+            SELECT MAX(ExecutionDate) AS last_run,
+                   COUNT(CASE WHEN DATE(ExecutionDate) =
+                        (SELECT DATE(MAX(ExecutionDate)) FROM {T_EXEC}) THEN 1 END) AS n,
+                   SUM(CASE WHEN DATE(ExecutionDate) =
+                        (SELECT DATE(MAX(ExecutionDate)) FROM {T_EXEC})
+                        AND TestResult = 'ERROR' THEN 1 ELSE 0 END) AS e
+            FROM {T_EXEC}
+        """)[0]
+        out["last_run_at"]    = r["last_run"]
+        out["tests_executed"] = r["n"] or 0
+        out["errors"]         = r["e"] or 0
+        if r["last_run"]:
+            last = datetime.fromisoformat(str(r["last_run"]).replace("Z", ""))
+            out["stale"] = (now_brt() - last).total_seconds() > 26 * 3600
+    except Exception:
+        pass
+    if ORCHESTRATOR_JOB_ID:
+        try:
+            from databricks.sdk import WorkspaceClient
+            w = WorkspaceClient()
+            active = list(w.jobs.list_runs(job_id=int(ORCHESTRATOR_JOB_ID),
+                                           active_only=True, limit=1))
+            out["running"] = bool(active)
+        except Exception:
+            pass
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1631,7 +1913,7 @@ def create_dash_view(body: DashViewIn, user: User = Depends(get_user)):
         cnt = 0
 
     view_id = str(uuid.uuid4())
-    now = datetime.utcnow()
+    now = now_brt()
     try:
         pos_rows = db.query(f"SELECT COALESCE(MAX(position), 0) AS mx FROM {T_DASH_VIEWS}")
         pos = (pos_rows[0]["mx"] or 0) + 1
@@ -1654,7 +1936,7 @@ def create_dash_view(body: DashViewIn, user: User = Depends(get_user)):
 def update_dash_view(view_id: str, body: DashViewIn, user: User = Depends(get_user)):
     if not body.title.strip():
         raise HTTPException(400, "O nome da view é obrigatório")
-    now = datetime.utcnow()
+    now = now_brt()
     try:
         db.execute(
             f"UPDATE {T_DASH_VIEWS} SET title=%(title)s, updated_at=%(now)s WHERE view_id=%(vid)s",
@@ -1708,7 +1990,7 @@ def add_chart(view_id: str, body: DashChartIn, user: User = Depends(get_user)):
         cnt = 0
 
     chart_id = str(uuid.uuid4())
-    now = datetime.utcnow()
+    now = now_brt()
     try:
         pos_rows = db.query(
             f"SELECT COALESCE(MAX(position), 0) AS mx FROM {T_DASH_CHARTS} WHERE view_id=%(vid)s",
@@ -1740,7 +2022,7 @@ def update_chart(chart_id: str, body: DashChartIn, user: User = Depends(get_user
     if not body.title.strip():
         raise HTTPException(400, "O título do gráfico é obrigatório")
     _validate_chart_body(body.chart_type, body.width, body.config)
-    now = datetime.utcnow()
+    now = now_brt()
     try:
         db.execute(
             f"UPDATE {T_DASH_CHARTS} SET title=%(title)s, chart_type=%(ct)s, test_id=%(tid)s, "
@@ -1788,7 +2070,7 @@ def move_chart(chart_id: str, body: MoveIn, user: User = Depends(get_user)):
     if not adj:
         return {"moved": False}
     adj = adj[0]
-    now = datetime.utcnow()
+    now = now_brt()
     db.execute(
         f"UPDATE {T_DASH_CHARTS} SET position=%(pos)s, updated_at=%(now)s WHERE chart_id=%(id)s",
         {"pos": adj["position"], "now": now, "id": chart_id}
@@ -1828,6 +2110,12 @@ def get_chart_data(chart_id: str, user: User = Depends(get_user)):
     top_n_series  = int(config.get("top_n_series") or 8)
     date_range    = str(config.get("date_range") or "30d")
     palette       = str(config.get("palette") or "blue")
+
+    # F4 — re-validate column names read back from storage before they reach SQL
+    # (configs saved before validation existed could carry anything).
+    for _v in (x_axis, y_column, group_by or ""):
+        if _v and str(_v) not in ("ArchiveDate", "none", "null", "") and not _COL_RE.match(str(_v)):
+            raise HTTPException(400, "Configuração de gráfico inválida — edite o gráfico e salve novamente")
 
     table      = _safe_table_name(test["output_table"])
     full_table = f"{CATALOG}.{SCHEMA}.{table}"

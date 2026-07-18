@@ -42,6 +42,20 @@ CATALOG   = "sandbox"
 SCHEMA    = "grc"
 T_ENTRIES = os.getenv("COMPLIANCE_ENTRIES_TABLE", "compliance.sharepoint_list.tb_risk_entries")
 
+# Fuso oficial do sistema: Brasília (F8). A sessão Spark e todos os timestamps
+# gravados usam America/Sao_Paulo — o app (main.py/db.py) segue a mesma regra.
+from zoneinfo import ZoneInfo
+BRT = ZoneInfo("America/Sao_Paulo")
+
+try:
+    spark.conf.set("spark.sql.session.timeZone", "America/Sao_Paulo")
+except Exception:
+    pass  # sem permissão para alterar a conf — segue o TZ do cluster
+
+
+def now_brt() -> datetime:
+    return datetime.now(BRT).replace(tzinfo=None)
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -50,7 +64,7 @@ T_ENTRIES = os.getenv("COMPLIANCE_ENTRIES_TABLE", "compliance.sharepoint_list.tb
 # COMMAND ----------
 
 def should_run_today(frequency: str) -> bool:
-    today    = datetime.today()
+    today    = now_brt()   # fronteiras de dia/semana/mês seguem Brasília (F8)
     weekday  = today.weekday()
     day      = today.day
     frequency = frequency.upper()
@@ -122,7 +136,7 @@ def log_execution(
     ])
     data = [(
         test_name, description, responsible_area, risco_id, frequency,
-        datetime.now(), incident_count, incident_count_raw, float(exec_time_sec), threshold,
+        now_brt(), incident_count, incident_count_raw, float(exec_time_sec), threshold,
         test_result, should_activate_channel, error_message,
         is_suppressed, is_recurrent, is_continued,
     )]
@@ -167,7 +181,7 @@ def save_incident_hash(test_name, incident_hash, row_count, is_suppressed, is_re
         StructField("is_recurrent",   BooleanType(),   True),
     ])
     df_h = spark.createDataFrame(
-        [(test_name, datetime.now(), incident_hash, row_count, is_suppressed, is_recurrent)],
+        [(test_name, now_brt(), incident_hash, row_count, is_suppressed, is_recurrent)],
         schema=schema_def
     )
     ensure_schema_exists()
@@ -364,7 +378,7 @@ def run_standard_test(
         return
 
     try:
-        start              = datetime.now()
+        start              = now_brt()
         incident_count_raw = result_df.count()
 
         # Hash calculado sobre todas as linhas brutas (sem ArchiveDate / _is_false_positive)
@@ -372,8 +386,8 @@ def run_standard_test(
 
         # Adiciona _is_false_positive e ArchiveDate antes de persistir
         result_df = add_fp_flags(result_df, test_name)
-        result_df = result_df.withColumn("ArchiveDate", lit(datetime.now()).cast("timestamp"))
-        exec_time = (datetime.now() - start).total_seconds()
+        result_df = result_df.withColumn("ArchiveDate", lit(now_brt()).cast("timestamp"))
+        exec_time = (now_brt() - start).total_seconds()
 
         # Contagem limpa (exclui FPs) determina threshold e alertas
         incident_count = result_df.filter(col("_is_false_positive") == False).count()

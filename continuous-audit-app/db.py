@@ -45,6 +45,9 @@ def _new_connection():
         http_path=HTTP_PATH,
         access_token=_get_token(),
         _socket_timeout=30,
+        # Pin the SQL session to Brasília so current_timestamp()/DATE() agree
+        # with the timestamps the app writes via now_brt() (F8).
+        session_configuration={"timezone": "America/Sao_Paulo"},
     )
 
 
