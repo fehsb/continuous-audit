@@ -474,7 +474,11 @@ function localValidate(type, imp, code) {
 // ── Display ──────────────────────────────────────────────────────────────────
 const S_LABEL = {ACTIVE:"Ativo",DRAFT:"Rascunho",UNDER_REVIEW:"Em Revisão",PAUSED:"Pausado",CANCELLED:"Cancelado",REJECTED:"Rejeitado",PENDING_DELETE:"Excl. Pendente"};
 const S_CLS   = {ACTIVE:"active",DRAFT:"draft",UNDER_REVIEW:"review",PAUSED:"paused",CANCELLED:"cancelled",REJECTED:"rejected",PENDING_DELETE:"pdelete"};
-const R_LABEL = {PASSED:"Cleared",FAILED:"Flagged",ERROR:"Error"};
+// D2 — glossário PT: conceitos do produto em português; jargão técnico (SQL,
+// PYTHON, Threshold, Slack) e valores persistidos permanecem como estão.
+const R_LABEL = {PASSED:"Sem achados",FAILED:"Com achados",ERROR:"Erro"};
+const FREQ_LABEL = {DAILY:"Diária",WEEKLY:"Semanal · sexta",MONTHLY:"Mensal · dia 5"};
+const fmtFreq = f => FREQ_LABEL[(f||"").toUpperCase()] || f || "—";
 
 // D1 — a cor ordena a atenção como a auditoria ordena o risco:
 // verde ok · vermelho novo · magenta reincidente · laranja persistente ·
@@ -927,14 +931,14 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
             <div className="field">
               <label className="field-label">Threshold</label>
               <input className="field-input" type="number" min={0} value={form.threshold} onChange={e=>set("threshold",parseInt(e.target.value)||0)}/>
-              <span style={{fontSize:10.5,color:"var(--text-subtle)",lineHeight:1.4}}>Nº de achados (já sem falsos positivos) acima do qual a execução vira <strong>Flagged</strong>. 0 = qualquer achado alerta.</span>
+              <span style={{fontSize:10.5,color:"var(--text-subtle)",lineHeight:1.4}}>Nº de achados (já sem falsos positivos) acima do qual a execução fica <strong>Com achados</strong>. 0 = qualquer achado alerta.</span>
             </div>
             <div className="field">
               <label className="field-label">Frequência</label>
               <select className="field-select" value={form.frequency} onChange={e=>set("frequency",e.target.value)}>
-                <option value="DAILY">Daily — todo dia</option>
-                <option value="WEEKLY">Weekly — toda sexta</option>
-                <option value="MONTHLY">Monthly — dia 5</option>
+                <option value="DAILY">Diária — todo dia</option>
+                <option value="WEEKLY">Semanal — toda sexta</option>
+                <option value="MONTHLY">Mensal — dia 5</option>
               </select>
             </div>
             <div className="field">
@@ -959,7 +963,7 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
             <label className="toggle-row" style={{cursor:"pointer"}}>
               <input type="checkbox" checked={form.should_activate_channel} onChange={e=>set("should_activate_channel",e.target.checked)}/>
               <span style={{fontSize:13,color:form.should_activate_channel?"var(--primary)":"var(--text-muted)"}}>
-                {form.should_activate_channel?"🔔 Notificar Slack quando Flagged":"🔕 Sem notificação"}
+                {form.should_activate_channel?"🔔 Notificar Slack quando houver achados":"🔕 Sem notificação"}
               </span>
             </label>
           </div>
@@ -2023,8 +2027,8 @@ function TestDetail({test, user, risks, onClose, onEdit, onPause, onActivate, on
               <div className="sec-title" style={{marginTop:20}}>Configuração</div>
               <div style={{display:"flex",gap:22,flexWrap:"wrap",alignItems:"baseline",marginBottom:10}}>
                 {[
-                  ["Threshold", String(test.threshold), "Nº de achados (já sem falsos positivos) acima do qual a execução vira Flagged"],
-                  ["Frequência", test.frequency||"—", null],
+                  ["Threshold", String(test.threshold), "Nº de achados (já sem falsos positivos) acima do qual a execução fica Com achados"],
+                  ["Frequência", fmtFreq(test.frequency), null],
                   ["Query", test.query_type||"—", null],
                   ["Slack", test.should_activate_channel?"ativa":"inativa", null],
                 ].map(([l,v,tip])=>(
@@ -2635,7 +2639,7 @@ function ReviewQueue({tests, user, onApprove, onReject, loading}) {
               <div className="meta-item"><span className="meta-lbl">Solicitado por</span><span className="meta-val">{submitter}</span></div>
               <div className="meta-item"><span className="meta-lbl">Área</span><span className="meta-val">{(isPending?t.pending_responsible_area:t.responsible_area)||"—"}</span></div>
               <div className="meta-item"><span className="meta-lbl">Risco</span><span className="meta-val">{(isPending?t.pending_risco_id:t.risco_id)||"—"}</span></div>
-              {!isDel&&<><div className="meta-item"><span className="meta-lbl">Threshold</span><span className="meta-val">{isPending?t.pending_threshold:t.threshold}</span></div><div className="meta-item"><span className="meta-lbl">Frequência</span><span className="meta-val">{isPending?t.pending_frequency:t.frequency}</span></div></>}
+              {!isDel&&<><div className="meta-item"><span className="meta-lbl">Threshold</span><span className="meta-val">{isPending?t.pending_threshold:t.threshold}</span></div><div className="meta-item"><span className="meta-lbl">Frequência</span><span className="meta-val">{fmtFreq(isPending?t.pending_frequency:t.frequency)}</span></div></>}
             </div>
             {isDel
               ? <>
@@ -2849,7 +2853,7 @@ function TestList({tests, loading, onSelect, onNew, risks}) {
                 </td>
                 <td style={{fontSize:12.5,color:"var(--text-muted)"}}>{t.responsible_area||"—"}</td>
                 <td><RiskBadge risk={riskMap[t.risco_id]}/></td>
-                <td className="cell-mono">{t.frequency}</td>
+                <td className="cell-mono" style={{fontSize:11}}>{fmtFreq(t.frequency)}</td>
                 <td className="cell-mono"><FmtRel dt={t.last_run}/></td>
                 <td className="cell-trend"><Sparkline trend={t.trend}/></td>
                 <td><AlertStatusBadge status={t.last_alert_status}/></td>
@@ -2904,7 +2908,7 @@ function DonutChart({cleared, flagged, error=0}) {
     const ch = new Chart(ctx, {
       type:"doughnut",
       data:{
-        labels:["Cleared","Flagged","Error"],
+        labels:["Sem achados","Com achados","Erro"],
         datasets:[{
           data:[cleared,flagged,error],
           backgroundColor:["#05966966","#dc262666","#d9770666"],
@@ -3528,9 +3532,9 @@ function Dashboard({tests, areas, toast=()=>{}}) {
     {key:"areas_covered",label:"Áreas Cobertas",        cls:"c-slate"},
   ];
   const RUN_KPIS = [
-    {key:"runs_total",   label:"Total de Runs",         cls:"c-amber"},
-    {key:"runs_cleared", label:"Runs Cleared",          cls:"c-green"},
-    {key:"runs_flagged", label:"Runs Flagged",          cls:"c-red"},
+    {key:"runs_total",   label:"Execuções",             cls:"c-amber"},
+    {key:"runs_cleared", label:"Sem Achados",           cls:"c-green"},
+    {key:"runs_flagged", label:"Com Achados",           cls:"c-red"},
   ];
   const kpiGroupLabel = {fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".7px",color:"var(--text-subtle)",marginBottom:8,display:"block"};
 
@@ -3550,9 +3554,9 @@ function Dashboard({tests, areas, toast=()=>{}}) {
           <span className="filter-label">Resultado</span>
           <select className="filter-input" value={filters.result} onChange={e=>setF("result",e.target.value)}>
             <option value="">Todos</option>
-            <option value="PASSED">Cleared</option>
-            <option value="FAILED">Flagged</option>
-            <option value="ERROR">Error</option>
+            <option value="PASSED">Sem achados</option>
+            <option value="FAILED">Com achados</option>
+            <option value="ERROR">Erro</option>
           </select>
         </div>
         <div className="filter-group">
@@ -3670,9 +3674,9 @@ function Dashboard({tests, areas, toast=()=>{}}) {
                       <div className="dash-card-title" style={{alignSelf:"flex-start"}}>Distribuição de Resultados</div>
                       <DonutChart cleared={kpi.runs_cleared||0} flagged={kpi.runs_flagged||0} error={kpi.runs_error||0}/>
                       <div style={{display:"flex",gap:16,marginTop:8,fontSize:12,justifyContent:"center",flexWrap:"wrap"}}>
-                        <span><span style={{color:"var(--success)",fontWeight:600}}>■</span> Cleared: {kpi.runs_cleared||0}</span>
-                        <span><span style={{color:"var(--danger)",fontWeight:600}}>■</span> Flagged: {kpi.runs_flagged||0}</span>
-                        <span><span style={{color:"var(--warning)",fontWeight:600}}>■</span> Error: {kpi.runs_error||0}</span>
+                        <span><span style={{color:"var(--success)",fontWeight:600}}>■</span> Sem achados: {fmtNum(kpi.runs_cleared||0)}</span>
+                        <span><span style={{color:"var(--danger)",fontWeight:600}}>■</span> Com achados: {fmtNum(kpi.runs_flagged||0)}</span>
+                        <span><span style={{color:"var(--warning)",fontWeight:600}}>■</span> Erro: {fmtNum(kpi.runs_error||0)}</span>
                       </div>
                       {(kpi.runs_cleared||0)+(kpi.runs_flagged||0)+(kpi.runs_error||0) > 0 && (
                         <div style={{marginTop:12,padding:"8px 16px",background:"var(--surface-alt)",borderRadius:"var(--rs)",fontSize:12,color:"var(--text-muted)",textAlign:"center"}}>
@@ -3689,8 +3693,8 @@ function Dashboard({tests, areas, toast=()=>{}}) {
                       <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:4}}>
                         {[
                           {label:"Total de execuções",   val:kpi.runs_total||0,   color:"var(--text)"},
-                          {label:"Execuções Cleared",    val:kpi.runs_cleared||0, color:"var(--success)"},
-                          {label:"Execuções Flagged",    val:kpi.runs_flagged||0, color:"var(--danger)"},
+                          {label:"Sem achados",          val:kpi.runs_cleared||0, color:"var(--success)"},
+                          {label:"Com achados",          val:kpi.runs_flagged||0, color:"var(--danger)"},
                           {label:"Execuções com Erro",   val:kpi.runs_error||0,   color:"var(--warning)"},
                         ].map(r=>(
                           <div key={r.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
@@ -3730,7 +3734,7 @@ function Dashboard({tests, areas, toast=()=>{}}) {
                       return topFlagged.length > 0 ? (
                         <div className="dash-card" style={{marginBottom:16}}>
                           <div className="dash-card-title">Top Testes com Achados no Período</div>
-                          <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:10}}>Testes ordenados por número de execuções Flagged — indica onde os riscos estão se materializando</div>
+                          <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:10}}>Testes ordenados por número de execuções com achados — indica onde os riscos estão se materializando</div>
                           <BarChart data={topFlagged} labelKey="label" valueKey="cnt" color="#dc2626"/>
                         </div>
                       ) : null;
@@ -3743,8 +3747,8 @@ function Dashboard({tests, areas, toast=()=>{}}) {
                         <table style={{width:"100%",borderCollapse:"collapse"}}>
                           <thead>
                             <tr style={{borderBottom:"1px solid var(--border)",background:"var(--surface-alt)"}}>
-                              {["Teste","Área","Última Exec.","Resultado","Achados","Flagged (período)"].map(h=>(
-                                <th key={h} style={{padding:"9px 13px",textAlign:["Achados","Flagged (período)"].includes(h)?"right":"left",fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>{h}</th>
+                              {["Teste","Área","Última Exec.","Resultado","Achados","Com achados (período)"].map(h=>(
+                                <th key={h} style={{padding:"9px 13px",textAlign:["Achados","Com achados (período)"].includes(h)?"right":"left",fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)"}}>{h}</th>
                               ))}
                             </tr>
                           </thead>
@@ -4011,14 +4015,6 @@ function App() {
   useEffect(() => {
     document.title = reviewCount > 0 ? `(${reviewCount}) Auditoria Contínua` : "Auditoria Contínua";
   }, [reviewCount]);
-
-  const STATS = [
-    {key:"active",  label:"Ativos",          cls:"c-indigo"},
-    {key:"paused",  label:"Pausados",         cls:"c-slate"},
-    {key:"cleared", label:"Cleared (30d)",    cls:"c-emerald", sub:"sem materialização"},
-    {key:"flagged", label:"Flagged (30d)",    cls:"c-rose",    sub:"risco materializado"},
-    {key:"error",   label:"Errors (30d)",     cls:"c-orange",  sub:"falha de execução"},
-  ];
 
   const NAV = [
     {id:"tests",  icon:"grid",  label:"Testes"},
