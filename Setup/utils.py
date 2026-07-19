@@ -54,7 +54,15 @@ except Exception:
 
 
 def now_brt() -> datetime:
-    return datetime.now(BRT).replace(tzinfo=None)
+    """Agora em Brasília, COM tzinfo (aware).
+
+    Datetime aware é convertido pelo Spark para o instante correto
+    independentemente do timezone da sessão ou do cluster — a versão naive
+    dependia do spark.sql.session.timeZone estar em BRT; quando a sessão
+    ficava em UTC, a parede de Brasília era gravada como UTC (instante 3h
+    atrás de verdade), e o app exibia a rodada 3h no passado.
+    """
+    return datetime.now(BRT)
 
 # COMMAND ----------
 

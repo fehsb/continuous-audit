@@ -93,4 +93,4 @@ for test in active_tests:
 
 # COMMAND ----------
 
-print(f"\n🏁 Orquestrador finalizado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"\n🏁 Orquestrador finalizado: {now_brt().strftime('%Y-%m-%d %H:%M:%S')} (BRT)")
