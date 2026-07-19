@@ -4088,8 +4088,13 @@ function App() {
             )}
             {page==="tests"&&orchHealth&&(()=>{ // X1 — saúde do orquestrador
               const h = orchHealth;
-              const ok = h.last_run_at && !h.stale && !h.errors;
-              const warn = h.last_run_at && !h.stale && h.errors > 0;
+              // Staleness derivada do MESMO instante exibido no "há Xh" — uma única
+              // fonte de verdade; o flag do backend fica só para consumo de API.
+              const stale = h.last_run_at
+                ? (Date.now() - new Date(h.last_run_at).getTime()) > 26*3600e3
+                : true;
+              const ok = h.last_run_at && !stale && !h.errors;
+              const warn = h.last_run_at && !stale && h.errors > 0;
               const cls = ok ? "alert-info" : "alert-warn";
               const dotColor = ok ? "var(--success)" : warn ? "var(--warning)" : "var(--danger)";
               return (
@@ -4101,7 +4106,7 @@ function App() {
                   {h.last_run_at
                     ? <span title="Contagem da última rodada do orquestrador (não acumula rodadas anteriores do dia)">última rodada <FmtRel dt={h.last_run_at}/> · {fmtNum(h.tests_executed)} teste{h.tests_executed===1?"":"s"}{h.errors>0 ? <> · <strong style={{color:"var(--warning)"}}>{h.errors} erro{h.errors===1?"":"s"}</strong></> : <> · <span style={{color:"var(--success)"}}>sem erros</span></>}</span>
                     : <span>nenhuma execução registrada ainda</span>}
-                  {h.stale && h.last_run_at && <strong style={{color:"var(--danger)"}}>· não roda há mais de 26h</strong>}
+                  {stale && h.last_run_at && <strong style={{color:"var(--danger)"}}>· não roda há mais de 26h</strong>}
                 </div>
               );
             })()}

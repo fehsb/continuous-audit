@@ -1785,7 +1785,8 @@ def run_orchestrator(user: User = Depends(get_user)):
 def orchestrator_health(user: User = Depends(get_user)):
     """X1 — health card: when the daily job last ran, how many tests, how many errors."""
     out = {"last_run_at": None, "tests_executed": 0, "errors": 0,
-           "stale": True, "running": False}
+           "stale": True, "running": False,
+           "server_now": now_brt().isoformat(timespec="seconds") + "-03:00"}
     try:
         last_row = db.query(f"SELECT MAX(ExecutionDate) AS last_run FROM {T_EXEC}")[0]
         last_run = last_row["last_run"]
