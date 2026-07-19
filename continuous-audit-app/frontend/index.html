@@ -1908,7 +1908,7 @@ function TestDetail({test, user, risks, onClose, onEdit, onPause, onActivate, on
           <div style={{flex:1}}>
             <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:5,flexWrap:"wrap"}}>
               <div className="modal-title">{test.test_name}</div>
-              <StatusBadge s={acting ? "LOADING" : test.status}/><TypeBadge t={test.query_type}/>
+              <StatusBadge s={acting ? "LOADING" : test.status}/>
             </div>
             <div className="modal-sub">v{test.version} · {test.category||"sem categoria"} · criado por {test.created_by}</div>
           </div>
@@ -1974,21 +1974,26 @@ function TestDetail({test, user, risks, onClose, onEdit, onPause, onActivate, on
               <div style={{background:"var(--surface-alt)",border:"1px solid var(--border)",borderRadius:"var(--r)",padding:"14px 18px",marginBottom:20}}>
                 <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                   <AlertStatusBadge status={test.last_alert_status}/>
-                  {test.trend&&test.trend.length>1&&<Sparkline trend={test.trend}/>}
                   <span style={{fontSize:12,color:"var(--text-muted)",flex:1,minWidth:220}}>{(ALERT_META[test.last_alert_status]||{}).desc||""}</span>
                 </div>
-                <div style={{display:"flex",flexWrap:"wrap",marginTop:14}}>
-                  {[
+                {(()=>{
+                  const stats = [
                     {l:"Última execução", v:<><FmtRel dt={test.last_run}/>{test.last_result&&<> · <ResultBadge r={test.last_result}/></>}</>},
                     {l:"Achados", v:<span style={{fontFamily:"var(--mono)",fontWeight:700,color:(test.last_incident_count||0)>0?"var(--danger)":"var(--success)"}}>{test.last_incident_count!=null?fmtNum(test.last_incident_count):"—"}</span>},
                     {l:"Próxima execução", v: test.status==="ACTIVE" ? nextRunLabel(test.frequency) : "não está ativo"},
-                  ].map((s,i)=>(
-                    <div key={i} style={{flex:"1 1 150px",paddingRight:18,marginRight:18,borderRight:i<2?"1px solid var(--border)":"none"}}>
-                      <div style={lbl}>{s.l}</div>
-                      <div style={{fontSize:13.5,fontWeight:600,marginTop:4}}>{s.v}</div>
+                    {l:"Tendência · 14 exec.", v: (test.trend&&test.trend.length>1) ? <Sparkline trend={test.trend}/> : <span style={{color:"var(--text-subtle)"}}>—</span>},
+                  ];
+                  return (
+                    <div style={{display:"flex",flexWrap:"wrap",marginTop:14,rowGap:12}}>
+                      {stats.map((s,i)=>(
+                        <div key={i} style={{flex:"1 1 150px",paddingRight:18,marginRight:18,borderRight:i<stats.length-1?"1px solid var(--border)":"none"}}>
+                          <div style={lbl}>{s.l}</div>
+                          <div style={{fontSize:13.5,fontWeight:600,marginTop:4,display:"flex",alignItems:"center",minHeight:22}}>{s.v}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
                 {hasFlags && (
                   <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
                     {(test.active_fp_count||0)>0 && <button style={chip} onClick={()=>setTab("achados")}>⚑ {fmtNum(test.active_fp_count)} falso{test.active_fp_count>1?"s":""} positivo{test.active_fp_count>1?"s":""} ativo{test.active_fp_count>1?"s":""} →</button>}
@@ -2003,7 +2008,7 @@ function TestDetail({test, user, risks, onClose, onEdit, onPause, onActivate, on
               {test.risco_id ? (
                 <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
                   <span style={{fontFamily:"var(--mono)",fontSize:13,fontWeight:600,color:"var(--primary)"}}>{test.risco_id}</span>
-                  <span style={{fontSize:13.5,fontWeight:600,flex:1,minWidth:200}}>{risk?.RiskTitle||""}</span>
+                  <span style={{fontSize:13.5,fontWeight:600}}>{risk?.RiskTitle||""}</span>
                   {risk?.RiskLevel && <span title="Nível de risco inerente (GRC)"><RiskBadge risk={risk}/></span>}
                 </div>
               ) : (
