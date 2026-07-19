@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # 🎯 Continuous Audit V2 — Orquestrador
 # MAGIC >
-# MAGIC > Lê os testes ativos de `sandbox.grc.tb_test_configurations` e executa cada um.
+# MAGIC > Lê os testes ativos de `{CA_CATALOG}.{CA_SCHEMA}.tb_test_configurations` e executa cada um.
 # MAGIC > O `test_id` é passado para `run_standard_test` para permitir verificação de supressões.
 
 # COMMAND ----------
@@ -16,7 +16,8 @@ import traceback
 
 # COMMAND ----------
 
-CONFIG_TABLE = "sandbox.grc.tb_test_configurations"
+# CATALOG/SCHEMA vêm do %run do utils (parametrizados por CA_CATALOG/CA_SCHEMA)
+CONFIG_TABLE = f"{CATALOG}.{SCHEMA}.tb_test_configurations"
 
 active_tests = (
     spark.table(CONFIG_TABLE)
