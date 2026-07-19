@@ -501,12 +501,15 @@ function AlertStatusBadge({status}) {
 }
 const R_CLS   = {PASSED:"cleared",FAILED:"flagged",ERROR:"error"};
 const CHG_LBL = {CREATED:"✦ Criado",EDITED:"✎ Editado",EDITED_PENDING_REVIEW:"✎ Alteração Submetida",SUBMITTED_FOR_REVIEW:"→ Submetido",APPROVED:"✓ Aprovado",REJECTED:"✕ Rejeitado",PAUSED:"⏸ Pausado",REACTIVATED:"▶ Reativado",CANCELLED:"⊗ Cancelamento Aprovado"};
-const fmt = dt => dt ? new Date(dt).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"}) : "—";
+// Todas as datas/horas são exibidas em Brasília (GMT-3), independente do fuso
+// do navegador — a API entrega os instantes com offset -03:00 explícito.
+const TZ_BRT = {timeZone:"America/Sao_Paulo"};
+const fmt = dt => dt ? new Date(dt).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short",...TZ_BRT}) : "—";
 // U8 — tempo relativo até 7 dias (tooltip sempre tem o timestamp completo)
 function fmtRelStr(dt) {
   if (!dt) return "—";
   const ms = Date.now() - new Date(dt).getTime();
-  if (ms < 0 || ms > 7*24*3600e3) return new Date(dt).toLocaleDateString("pt-BR",{dateStyle:"short"});
+  if (ms < 0 || ms > 7*24*3600e3) return new Date(dt).toLocaleDateString("pt-BR",{dateStyle:"short",...TZ_BRT});
   const min = Math.floor(ms/60000);
   if (min < 1)   return "agora";
   if (min < 60)  return `há ${min} min`;
@@ -544,7 +547,7 @@ function nextRunLabel(freq) {
   const f = (freq||"DAILY").toUpperCase();
   const now = new Date();
   const d = new Date(now);
-  const fd = x => x.toLocaleDateString("pt-BR",{weekday:"short",day:"2-digit",month:"2-digit"});
+  const fd = x => x.toLocaleDateString("pt-BR",{weekday:"short",day:"2-digit",month:"2-digit",...TZ_BRT});
   if (f === "DAILY")   { if (now.getHours() >= 7) d.setDate(d.getDate()+1); return `${fd(d)} ~06:00`; }
   if (f === "WEEKLY")  { let add=(5-d.getDay()+7)%7; if (add===0 && now.getHours()>=7) add=7; d.setDate(d.getDate()+add); return `${fd(d)} (sexta)`; }
   if (f === "MONTHLY") { const t=new Date(now.getFullYear(),now.getMonth(),5,6); if (now>t) t.setMonth(t.getMonth()+1); return `${fd(t)} (dia 5)`; }
@@ -4065,7 +4068,7 @@ function App() {
         <main className="main">
           <div className="topbar">
             <div className="topbar-title">{page==="tests"?"Testes de Auditoria":page==="review"?"Fila de Revisão":page==="fp"?"Falsos Positivos":"Dashboard"}</div>
-            {lastRef&&<span className="topbar-meta">atualizado às {lastRef.toLocaleTimeString("pt-BR",{timeStyle:"short"})}</span>}
+            {lastRef&&<span className="topbar-meta">atualizado às {lastRef.toLocaleTimeString("pt-BR",{timeStyle:"short",...TZ_BRT})} (BRT)</span>}
             <button className="btn btn-ghost btn-sm" onClick={loadAll} disabled={loading}><Icon name="refresh" size={13}/> {loading?"Atualizando…":"Atualizar"}</button>
             {page==="tests"&&<button className="btn btn-ghost btn-sm" onClick={handleRunOrchestrator}
               disabled={running||runCooldown||!orchConfigured}

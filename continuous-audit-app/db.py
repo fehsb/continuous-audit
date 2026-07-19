@@ -77,12 +77,25 @@ def _conn():
         conn.close()
 
 
+BRT_OFFSET = "-03:00"  # Brasília — sem horário de verão desde 2019
+
+
 def _serialize(row: dict) -> dict:
-    """Convert datetime objects to ISO strings for JSON serialization."""
-    return {
-        k: (v.isoformat() if isinstance(v, datetime) else v)
-        for k, v in row.items()
-    }
+    """Convert datetime objects to ISO strings for JSON serialization.
+
+    A sessão do warehouse é pinada em America/Sao_Paulo, então o valor que o
+    conector devolve é a HORA DE PAREDE de Brasília — mas às vezes rotulada
+    como UTC (ou sem fuso), o que fazia o navegador reconverter e exibir -3h.
+    Normalizamos: descartamos o rótulo e declaramos o offset real (-03:00),
+    para que qualquer cliente exiba o instante correto.
+    """
+    out = {}
+    for k, v in row.items():
+        if isinstance(v, datetime):
+            out[k] = v.replace(tzinfo=None).isoformat(timespec="seconds") + BRT_OFFSET
+        else:
+            out[k] = v
+    return out
 
 
 def query(sql_text: str, params: dict = None) -> list[dict]:

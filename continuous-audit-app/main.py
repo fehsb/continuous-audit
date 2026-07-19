@@ -1791,20 +1791,25 @@ def orchestrator_health(user: User = Depends(get_user)):
         last_run = last_row["last_run"]
         if last_run:
             out["last_run_at"] = last_run
-            last = datetime.fromisoformat(str(last_run).replace("Z", ""))
+            # Serializado como parede BRT + "-03:00" (db._serialize); normalizamos
+            # para naive BRT antes de comparar com now_brt() — o mix aware/naive
+            # levantava TypeError silencioso e deixava o stale sempre vermelho.
+            last = datetime.fromisoformat(str(last_run)).replace(tzinfo=None)
+            out["stale"] = (now_brt() - last).total_seconds() > 26 * 3600
             # A "última rodada" é o LOTE que termina em MAX(ExecutionDate): uma rodada
             # do orquestrador leva minutos, então uma janela de 2h captura o lote sem
-            # somar rodadas anteriores do mesmo dia (disparos manuais acumulavam antes).
-            batch_start = last - timedelta(hours=2)
-            batch = db.query(f"""
-                SELECT COUNT(DISTINCT TestName) AS n,
-                       COUNT(DISTINCT CASE WHEN TestResult = 'ERROR' THEN TestName END) AS e
-                FROM {T_EXEC}
-                WHERE ExecutionDate > %(start)s AND ExecutionDate <= %(end)s
-            """, {"start": batch_start, "end": last})[0]
-            out["tests_executed"] = batch["n"] or 0
-            out["errors"]         = batch["e"] or 0
-            out["stale"] = (now_brt() - last).total_seconds() > 26 * 3600
+            # somar rodadas anteriores do mesmo dia.
+            try:
+                batch = db.query(f"""
+                    SELECT COUNT(DISTINCT TestName) AS n,
+                           COUNT(DISTINCT CASE WHEN TestResult = 'ERROR' THEN TestName END) AS e
+                    FROM {T_EXEC}
+                    WHERE ExecutionDate > %(start)s AND ExecutionDate <= %(end)s
+                """, {"start": last - timedelta(hours=2), "end": last})[0]
+                out["tests_executed"] = batch["n"] or 0
+                out["errors"]         = batch["e"] or 0
+            except Exception:
+                pass
     except Exception:
         pass
     if ORCHESTRATOR_JOB_ID:
