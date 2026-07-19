@@ -448,6 +448,13 @@ const api = {
   moveChart:       (chartId, dir)  => req("POST",   `/dashboard-charts/${chartId}/move`, {direction: dir}),
   getChartData:    (chartId)       => req("GET",    `/dashboard-charts/${chartId}/data`),
   getIncidentCols: (testId)        => req("GET",    `/tests/${testId}/incident-columns`),
+  // Migração PRD (temporário — remover após o cutover)
+  migStatus:       (cat, sch)      => req("GET",    `/admin/migration/status?catalog=${cat}&schema=${sch}`),
+  migProbe:        (cat, sch)      => req("POST",   `/admin/migration/probe-write?catalog=${cat}&schema=${sch}`),
+  migSetup:        (cat, sch)      => req("POST",   `/admin/migration/setup-tables?catalog=${cat}&schema=${sch}`),
+  migAlterExec:    (cat, sch)      => req("POST",   `/admin/migration/alter-executions?catalog=${cat}&schema=${sch}`),
+  migSeed:         (cat, sch)      => req("POST",   `/admin/migration/seed-tests?catalog=${cat}&schema=${sch}`),
+  migValidate:     (cat, sch)      => req("GET",    `/admin/migration/validate?catalog=${cat}&schema=${sch}`),
 };
 
 // ── Validation ───────────────────────────────────────────────────────────────
@@ -3858,6 +3865,140 @@ function Dashboard({tests, areas, toast=()=>{}}) {
   );
 }
 
+// ── MigrationPage (temporário — remover após o cutover p/ produção) ──────────
+function MigrationPage() {
+  // Alvo da migração — explícito, independente do ambiente atual do app
+  const [target,  setTarget]  = useState("compliance.continuous_audit");
+  const [status,  setStatus]  = useState(null);
+  const [results, setResults] = useState({});   // step -> resultado JSON
+  const [busy,    setBusy]    = useState(null); // step em execução
+
+  const [cat, sch] = target.split(".");
+
+  function loadStatus() {
+    setBusy("status");
+    api.migStatus(cat, sch)
+      .then(r => { setStatus(r); setBusy(null); })
+      .catch(e => { setStatus({error: e.message}); setBusy(null); });
+  }
+  useEffect(() => { loadStatus(); }, [target]);
+
+  async function runStep(key, fn, confirmMsg) {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setBusy(key);
+    try {
+      const r = await fn();
+      setResults(prev => ({...prev, [key]: r}));
+    } catch(e) {
+      setResults(prev => ({...prev, [key]: {error: e.message}}));
+    }
+    setBusy(null);
+    loadStatus();
+  }
+
+  const STEPS = [
+    {key:"probe", label:"0 · Testar permissão de escrita", danger:false,
+     desc:"Cria e remove uma tabela probe no alvo. Se falhar, o service principal do app não tem escrita — nada abaixo vai funcionar.",
+     run:()=>runStep("probe", ()=>api.migProbe(cat,sch))},
+    {key:"setup", label:"1 · Criar tabelas de controle", danger:false,
+     desc:"CREATE IF NOT EXISTS das 9 tabelas de controle. Não toca nas tb_incidents_* nem em dados existentes.",
+     run:()=>runStep("setup", ()=>api.migSetup(cat,sch))},
+    {key:"alter", label:"2 · ALTER tb_tests_executions", danger:false,
+     desc:"Adiciona IncidentCountRaw / IsSupressed / IsRecurrent / IsContinued se faltarem (idempotente). Obrigatório antes de virar o app.",
+     run:()=>runStep("alter", ()=>api.migAlterExec(cat,sch))},
+    {key:"seed", label:"3 · Seed dos 28 testes", danger:true,
+     desc:"Insere as configs dos 28 testes do V1 (25 ACTIVE + 3 PAUSED) com frequências REAIS. Idempotente: apaga por test_name e reinsere — sobrescreve edições manuais nesses 28.",
+     run:()=>runStep("seed", ()=>api.migSeed(cat,sch),
+        `Semear os 28 testes em ${target}? Isso apaga e reinsere as configs desses 28 test_names.`)},
+    {key:"validate", label:"4 · Validar migração", danger:false,
+     desc:"Checklist read-only: 25 ACTIVE + 3 PAUSED, colunas do executions, amostra do histórico de achados.",
+     run:()=>runStep("validate", ()=>api.migValidate(cat,sch))},
+  ];
+
+  const ctrl = status?.control_tables || {};
+  const ctrlNames = Object.keys(ctrl);
+
+  return (
+    <div>
+      <div className="alert alert-warn" style={{marginBottom:16}}>
+        🚚 <strong>Migração PRD</strong> — tela temporária. Siga os passos na ordem (runbook: <code>Setup/MIGRATION-PROD.md</code>).
+        Após o cutover e validação, esta tela deve ser removida do app.
+      </div>
+
+      {/* Alvo */}
+      <div className="dash-card" style={{marginBottom:16,display:"flex",gap:14,alignItems:"center",flexWrap:"wrap"}}>
+        <div>
+          <div style={{fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",letterSpacing:".6px",color:"var(--text-muted)",marginBottom:4}}>Alvo da migração</div>
+          <select className="field-select" value={target} onChange={e=>{setTarget(e.target.value);setResults({});}}>
+            <option value="compliance.continuous_audit">compliance.continuous_audit (produção)</option>
+            <option value="sandbox.grc">sandbox.grc (ensaio)</option>
+          </select>
+        </div>
+        <div style={{fontSize:12,color:"var(--text-muted)"}}>
+          App atualmente lê/escreve em: <strong style={{fontFamily:"var(--mono)"}}>{status?.app_current_env||"…"}</strong>
+          {status && status.app_current_env===target && <span style={{color:"var(--warning)"}}> ← app já aponta pro alvo</span>}
+        </div>
+        <button className="btn btn-ghost btn-sm" style={{marginLeft:"auto"}} onClick={loadStatus} disabled={busy==="status"}>
+          {busy==="status"?"⏳":"⟳"} Atualizar status
+        </button>
+      </div>
+
+      {/* Status atual do alvo */}
+      <div className="dash-card" style={{marginBottom:16}}>
+        <div className="dash-card-title">Estado do alvo</div>
+        {!status ? <div className="loading"><div className="spinner"/>Consultando…</div>
+        : status.error ? <div className="val-error">{status.error}</div>
+        : (
+          <div style={{display:"flex",gap:24,flexWrap:"wrap",fontSize:12.5}}>
+            <div>
+              <div style={{fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",color:"var(--text-muted)",marginBottom:6}}>Tabelas de controle</div>
+              {ctrlNames.map(n=>(
+                <div key={n} style={{display:"flex",gap:8,padding:"2px 0"}}>
+                  <span>{ctrl[n]==null?"❌":"✅"}</span>
+                  <span style={{fontFamily:"var(--mono)",fontSize:11.5}}>{n}</span>
+                  {ctrl[n]!=null&&<span style={{color:"var(--text-subtle)"}}>({ctrl[n]} linhas)</span>}
+                </div>
+              ))}
+            </div>
+            <div>
+              <div style={{fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",color:"var(--text-muted)",marginBottom:6}}>Colunas novas do executions</div>
+              {Object.entries(status.executions_new_columns||{}).map(([c,ok])=>(
+                <div key={c} style={{display:"flex",gap:8,padding:"2px 0"}}>
+                  <span>{ok===true?"✅":"❌"}</span><span style={{fontFamily:"var(--mono)",fontSize:11.5}}>{c}{typeof ok==="string"?` — ${ok}`:""}</span>
+                </div>
+              ))}
+              <div style={{marginTop:10,fontFamily:"var(--mono)",fontSize:10,textTransform:"uppercase",color:"var(--text-muted)"}}>Tabelas de achados</div>
+              <div style={{fontSize:13,marginTop:2}}>{status.incident_tables_count} tabela(s) tb_incidents_*</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Passos */}
+      {STEPS.map(s=>(
+        <div key={s.key} className="dash-card" style={{marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"flex-start",gap:14,flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:280}}>
+              <div style={{fontWeight:600,fontSize:13.5}}>{s.label}</div>
+              <div style={{fontSize:12,color:"var(--text-muted)",marginTop:3,lineHeight:1.5}}>{s.desc}</div>
+            </div>
+            <button className={`btn btn-sm ${s.danger?"btn-warning":"btn-primary"}`} onClick={s.run} disabled={busy!==null}>
+              {busy===s.key?"⏳ Executando…":"Executar"}
+            </button>
+          </div>
+          {results[s.key]&&(
+            <pre style={{marginTop:10,padding:"10px 12px",background:"var(--surface-alt)",borderRadius:"var(--rs)",
+              fontSize:11,fontFamily:"var(--mono)",overflowX:"auto",whiteSpace:"pre-wrap",wordBreak:"break-word",
+              border:`1px solid ${results[s.key].error||results[s.key].status==="partial"||results[s.key].write_ok===false?"var(--danger-b)":"var(--success-b)"}`}}>
+              {JSON.stringify(results[s.key], null, 2)}
+            </pre>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
   const [user, setUser]       = useState(null);
@@ -4025,6 +4166,8 @@ function App() {
     {id:"review", icon:"check", label:"Revisão", badge: reviewCount||null},
     {id:"fp",     icon:"flag",  label:"Falsos Positivos"},
     {id:"dash",   icon:"chart", label:"Dashboard"},
+    // Temporário — remover após o cutover p/ produção
+    ...(user?.can_self_review ? [{id:"mig", icon:"refresh", label:"Migração PRD"}] : []),
   ];
 
   return (
@@ -4068,7 +4211,7 @@ function App() {
 
         <main className="main">
           <div className="topbar">
-            <div className="topbar-title">{page==="tests"?"Testes de Auditoria":page==="review"?"Fila de Revisão":page==="fp"?"Falsos Positivos":"Dashboard"}</div>
+            <div className="topbar-title">{page==="tests"?"Testes de Auditoria":page==="review"?"Fila de Revisão":page==="fp"?"Falsos Positivos":page==="mig"?"Migração PRD":"Dashboard"}</div>
             {lastRef&&<span className="topbar-meta">atualizado às {lastRef.toLocaleTimeString("pt-BR",{timeStyle:"short",...TZ_BRT})} (BRT)</span>}
             <button className="btn btn-ghost btn-sm" onClick={loadAll} disabled={loading}><Icon name="refresh" size={13}/> {loading?"Atualizando…":"Atualizar"}</button>
             {page==="tests"&&<button className="btn btn-ghost btn-sm" onClick={handleRunOrchestrator}
@@ -4187,6 +4330,7 @@ function App() {
               if (t) { setPage("tests"); setDetail(t); }
             }}/>}
             {page==="dash"&&<Dashboard tests={tests} areas={areas} toast={toast}/>}
+            {page==="mig"&&user?.can_self_review&&<MigrationPage/>}
           </div>
         </main>
       </div>

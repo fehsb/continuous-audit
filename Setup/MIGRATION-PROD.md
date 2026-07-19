@@ -3,129 +3,127 @@
 Objetivo: mover o sistema V2 **inteiramente** para `compliance.continuous_audit` e
 **desativar o sandbox**. Ao final, nada de operacional roda em `sandbox.grc`.
 
+## Restrições que moldam este plano
+
+1. **Só o app (service principal) e o Job do orquestrador escrevem em PRD.**
+   Você não escreve via notebook/SQL editor. Por isso os passos de criação/seed
+   rodam pela **tela "Migração PRD"** do app (temporária, visível só para
+   `SELF_REVIEW_ALLOWED`), que executa cada passo pelo warehouse com alvo
+   **explícito** — independente do `CA_CATALOG` atual do app.
+2. **Só UM orquestrador escreve nas `tb_incidents_*`/`tb_tests_executions`.**
+   O Job V2 **substitui** o V1 — nunca os dois ativos juntos (senão duplica achados).
+3. O app aponta para **um** ambiente por vez (`CA_CATALOG`/`CA_SCHEMA`).
+
+## Decisão de arquitetura — catálogo único
+
+**Config e incidentes ficam juntos em `compliance.continuous_audit`.** Motivos:
+todo o código (utils `save_to_table`, app) usa um único par catálogo.schema —
+separar exigiria uma segunda env var e mudanças amplas em plena migração; os
+prefixos (`tb_test_*`, `tb_false_*`, `tb_dashboard_*` vs `tb_incidents_*`) já
+separam logicamente; permissão pode ser dada por tabela. Se a governança exigir,
+mover o plano de controle para um schema próprio fica como refactor **pós-migração**.
+
 ## Contexto
 
-- `compliance.continuous_audit` **já tem** as `tb_incidents_*` históricas (dados de produção do V1)
-  e o `tb_tests_executions` do V1. As `tb_incidents_*` têm `ArchiveDate` ✅.
-- Como os `output_table` do seed **já batem** com os nomes dessas tabelas, **não há cópia de dados**:
-  apontar o V2 para lá já traz todo o histórico (dashboards, análise de achados).
-- Falta criar o **plano de controle do V2** (`tb_test_configurations`, hashes, suppressions,
-  false_positives, dashboards) nesse schema.
-
-## ⚠️ Regra de ouro
-
-**Só UM orquestrador pode escrever nas `tb_incidents_*` / `tb_tests_executions`.**
-O orquestrador V2 tem que **substituir** o V1 — nunca rodar em paralelo (senão duplica achados).
-A virada de escrita é o **Passo 4**.
+- `compliance.continuous_audit` **já tem** as 28 `tb_incidents_*` históricas (com
+  `ArchiveDate` ✅) e o `tb_tests_executions` do V1.
+- Os `output_table` do seed **batem** com esses nomes → **não há cópia de dados**;
+  apontar o V2 para lá já traz todo o histórico (dashboards, achados).
+- Falta o **plano de controle do V2**: `tb_test_configurations`(+history),
+  `tb_incident_hashes`, `tb_test_suppressions`, `tb_false_positives`(+history),
+  `tb_dashboard_views/charts`.
 
 ---
 
-## Pré-requisitos
+## O que NÃO PODE falhar (bloqueadores — pare se falhar)
 
-- [ ] Service principal do app com **read/write** em `compliance.continuous_audit`.
-- [ ] Job de produção do orquestrador fará `%run` do **utils atualizado** (com `reduce` + FP por critérios).
-- [ ] Decisão: o app aponta para **um** ambiente por vez. Ao virar, deixa de mostrar o sandbox.
+| # | Item | Por quê | Verificação |
+|---|---|---|---|
+| B1 | **Permissão de escrita do SP do app** em `compliance.continuous_audit` (CREATE TABLE, ALTER, INSERT/DELETE) | Sem isso nenhum passo roda | Passo 0 da tela (probe-write) |
+| B2 | **ALTER do `tb_tests_executions` antes de virar o app** | O app faz SELECT de `IsSupressed/IsRecurrent/IsContinued/IncidentCountRaw`; sem as colunas as queries **quebram** (não é só NULL) | Passo 2 da tela; status mostra ✅ por coluna |
+| B3 | **Job V1 desativado no momento em que o Job V2 ativa** | Dois orquestradores = achados duplicados no histórico | Manual (projeto do Job) |
+| B4 | **Seed com frequências REAIS** (o seed da tela já força isso) | 25 testes DAILY em produção = carga e ruído indevidos | `validate` mostra frequências |
+| B5 | **Job V2 com `%run` do utils ATUALIZADO + env `CA_CATALOG/CA_SCHEMA`** | Utils velho = FP por critérios inativo, erro do `reduce`; env errada = escreve no sandbox | Conferir no projeto do Job |
+
+## O que PODE falhar sem drama (retryable / reversível)
+
+| Item | Comportamento em falha |
+|---|---|
+| Criar tabelas de controle (Passo 1) | `CREATE IF NOT EXISTS` — idempotente; re-executar |
+| ALTER executions (Passo 2) | Checa existência antes; re-executar só adiciona o que falta |
+| Seed (Passo 3) | Idempotente por `test_name` (DELETE+INSERT); re-executar corrige parciais. **Atenção:** sobrescreve edições manuais feitas nesses 28 testes |
+| Virar o app (Passo 5) | Reversível: voltar `CA_CATALOG/CA_SCHEMA` no app.yaml e redeploy |
+| Validação (Passo 4) | Read-only |
+
+## Riscos conhecidos (não bloqueiam, mas saiba)
+
+- **Primeira execução V2 em prod = possível rajada de alertas.** `tb_incident_hashes`
+  não existe no V1, então todo teste FAILED da 1ª rodada é tratado como "novo achado"
+  (`should_notify=true`). Hoje as notificações estão desligadas no utils (`pass`), então
+  é inofensivo — **mas reative Slack/SharePoint só DEPOIS da 1ª rodada V2** para não
+  notificar achados antigos como novos.
+- **Linhas históricas do executions** ficam com NULL nas colunas novas — o app trata.
+- **Seed sobrescreve os 28 test_names** — se alguém editou um desses testes pela UI
+  em prod antes do seed, a edição é perdida (não re-rode o Passo 3 depois do cutover).
 
 ---
 
-## Passo 0 — Código (feito)
+## Passo a passo
 
-- `utils.py`: `CATALOG`/`SCHEMA` vêm de `CA_CATALOG`/`CA_SCHEMA` (default `sandbox`/`grc`).
-- `run-all-tests.py`: `CONFIG_TABLE` deriva do `CATALOG`/`SCHEMA` do utils.
-- `app`: já parametrizado por `CA_CATALOG`/`CA_SCHEMA` no `app.yaml`.
+### Passo 0 — Código (feito)
+- `utils.py` e `run-all-tests.py` parametrizados por `CA_CATALOG`/`CA_SCHEMA` (default sandbox/grc).
+- App idem (`app.yaml`).
+- Tela **Migração PRD** no app + endpoints `/api/admin/migration/*` (alvo explícito, gated).
+- `seed_v1_tests.json` empacotado no app (28 testes, frequências reais).
 
-Durante a migração, prod é **sempre explícito** (widgets/env = `compliance`/`continuous_audit`);
-os defaults só viram `compliance` no Passo 6.
+### Passo 1..4 — Pela tela "Migração PRD" (alvo: `compliance.continuous_audit`)
 
-## Passo 1 — Criar as tabelas de controle em produção
+> A tela fica no menu lateral (só para `SELF_REVIEW_ALLOWED`). Execute na ordem;
+> cada passo mostra o resultado JSON e atualiza o painel de status.
 
-Rode `Setup/setup-tables.sql` com widgets:
+| Passo na tela | O quê | Falhou? |
+|---|---|---|
+| **0 · Probe de escrita** | Cria+dropa tabela probe no alvo | **PARE** — resolver permissão do SP (B1) |
+| **1 · Criar tabelas de controle** | 9 tabelas, `IF NOT EXISTS` | Re-executar; se persistir, é permissão |
+| **2 · ALTER executions** | Colunas novas no `tb_tests_executions` V1 | **Não vire o app sem isso** (B2) |
+| **3 · Seed dos 28 testes** | Configs com frequências reais, `created_by=v1-migration` | Re-executar (idempotente) |
+| **4 · Validar** | 25 ACTIVE + 3 PAUSED, colunas ok, amostra do histórico com `ArchiveDate` | Investigar item reprovado antes de seguir |
 
-- `catalog = compliance`
-- `schema  = continuous_audit`
+### Passo 5 — Virar a escrita (orquestrador — projeto separado)
+- Job V2 com env `CA_CATALOG=compliance`, `CA_SCHEMA=continuous_audit`, `%run` do utils
+  atualizado, schedule 06:00 UTC diário.
+- **Desativar o Job V1 no mesmo movimento** (B3).
+- 1ª execução: apenda achados e loga com as colunas novas.
 
-Cria só o que falta. **Não toca** nas `tb_incidents_*` nem no `tb_tests_executions`
-(é `CREATE IF NOT EXISTS`).
+### Passo 6 — Virar o app
+No `app.yaml`: `CA_CATALOG: "compliance"`, `CA_SCHEMA: "continuous_audit"` → redeploy.
+**Só depois** dos passos 1–4. Validar na tela: 28 testes, histórico em "Analisar Achados",
+dashboards com dados reais.
 
-## Passo 2 — Atualizar o schema do `tb_tests_executions` do V1
-
-O `tb_tests_executions` de produção é do V1 e **não tem** as colunas novas
-(`IncidentCountRaw`, `IsSupressed`, `IsRecurrent`, `IsContinued`). O app lê essas colunas —
-sem elas, as queries de stats/dashboard **quebram**. Rode este snippet (idempotente):
-
-```python
-t = "compliance.continuous_audit.tb_tests_executions"
-cols = [("IncidentCountRaw","INT"),("IsSupressed","BOOLEAN"),
-        ("IsRecurrent","BOOLEAN"),("IsContinued","BOOLEAN")]
-existing = {c.name for c in spark.table(t).schema}
-for name, typ in cols:
-    if name not in existing:
-        spark.sql(f"ALTER TABLE {t} ADD COLUMNS ({name} {typ})")
-        print("added", name)
-print("OK — schema de tb_tests_executions atualizado")
-```
-
-Linhas históricas ficam com `NULL` nessas colunas (o app trata com COALESCE / status básico).
-
-## Passo 3 — Semear as configs dos testes em produção
-
-Rode `Setup/seed-v1-tests.py` com widgets:
-
-- `catalog = compliance`
-- `schema  = continuous_audit`
-- `force_daily = false`  ← **frequências reais** (nunca diário em prod)
-
-Popula `tb_test_configurations` com os 28 testes (25 ACTIVE, 3 PAUSED). Os `output_table`
-já apontam para as `tb_incidents_*` históricas → o app lê o histórico na hora.
-
-## Passo 4 — Virar a escrita (orquestrador)
-
-*(Projeto separado do Job.)* Suba o Job V2 do orquestrador apontando para
-`compliance.continuous_audit`:
-
-- Env do cluster: `CA_CATALOG=compliance`, `CA_SCHEMA=continuous_audit`.
-- `%run` do utils atualizado.
-- Schedule 06:00 UTC diário.
-- **Desative/remova o Job V1** no mesmo movimento (regra de ouro).
-
-Primeira execução: apenda achados novos nas `tb_incidents_*` e loga em `tb_tests_executions`
-(já com as colunas novas).
-
-## Passo 5 — Virar o app para produção
-
-No `app.yaml`, troque:
-
-```yaml
-- name: CA_CATALOG
-  value: "compliance"
-- name: CA_SCHEMA
-  value: "continuous_audit"
-```
-
-Redeploy do app. **Só depois** dos passos 1–3 (as tabelas de controle precisam existir).
-Valide na tela: 28 testes aparecem, "Analisar Achados" mostra o histórico, dashboards com dados reais.
-
-## Passo 6 — Consolidar defaults e desativar o sandbox
-
-Depois de tudo validado em produção:
-
-- [ ] Trocar os defaults de `CA_CATALOG`/`CA_SCHEMA` para `compliance`/`continuous_audit`
-      (utils.py, app.yaml) e os defaults dos widgets (`setup-tables.sql`, `seed-v1-tests.py`, `reset-data.sql`).
-- [ ] Confirmar que nada mais escreve em `sandbox.grc`.
-- [ ] (Opcional) `DROP`/arquivar as tabelas de `sandbox.grc` — usar `reset-data.sql` como referência.
+### Passo 7 — Consolidar e desligar o sandbox
+Depois de validado (alguns dias de rodadas limpas):
+- [ ] Reativar Slack/SharePoint no utils (**após** a 1ª rodada V2 — ver Riscos).
+- [ ] Trocar os defaults de `CA_CATALOG`/`CA_SCHEMA` para produção (utils.py, app.yaml, widgets dos notebooks).
+- [ ] **Remover a tela Migração PRD** e os endpoints `/api/admin/migration/*` do app.
+- [ ] Confirmar que nada escreve em `sandbox.grc`; arquivar/dropar as tabelas de lá.
 
 ---
 
 ## Rollback
 
-- App: reverter `app.yaml` para `sandbox`/`grc` e redeploy.
-- Orquestrador: reativar o Job V1 (se ainda não removido) — mas **nunca os dois ativos juntos**.
-- As tabelas de controle criadas em produção são inertes se o app/orquestrador não apontarem para lá.
+- **App:** reverter `app.yaml` para `sandbox`/`grc` + redeploy (minutos).
+- **Orquestrador:** reativar o Job V1 (se ainda existir) e desativar o V2 — nunca os dois.
+- Tabelas de controle criadas em prod são inertes se app/Job não apontarem para lá.
+- O seed não toca nas `tb_incidents_*` — o histórico nunca está em risco neste plano.
 
-## Checklist de verificação pós-virada
+## Checklist final
 
-- [ ] `SELECT count(*) FROM compliance.continuous_audit.tb_test_configurations` = 28
-- [ ] App lista 25 ACTIVE + 3 PAUSED
-- [ ] "Analisar Achados" de um teste mostra linhas históricas com datas antigas
-- [ ] Snippet de ERROR do `tb_tests_executions` após 1ª execução V2 = 0 (ou só acesso a fonte)
-- [ ] Nenhum Job V1 ativo
+- [ ] Probe de escrita OK em compliance
+- [ ] 9 tabelas de controle existem
+- [ ] 4 colunas novas no `tb_tests_executions`
+- [ ] Configs: 25 ACTIVE + 3 PAUSED, `created_by=v1-migration`, frequências reais
+- [ ] Job V2 ativo, Job V1 desativado
+- [ ] App em compliance; histórico visível; dashboards com dados
+- [ ] 1ª rodada V2 sem ERRORs inesperados
+- [ ] Notificações reativadas (após 1ª rodada)
+- [ ] Tela de migração removida; sandbox desligado
