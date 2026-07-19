@@ -7,7 +7,7 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -1791,15 +1791,19 @@ def orchestrator_health(user: User = Depends(get_user)):
         last_run = last_row["last_run"]
         if last_run:
             out["last_run_at"] = last_run
-            day = db.query(f"""
-                SELECT COUNT(*) AS n,
-                       SUM(CASE WHEN TestResult = 'ERROR' THEN 1 ELSE 0 END) AS e
-                FROM {T_EXEC}
-                WHERE DATE(ExecutionDate) = DATE(%(d)s)
-            """, {"d": last_run})[0]
-            out["tests_executed"] = day["n"] or 0
-            out["errors"]         = day["e"] or 0
             last = datetime.fromisoformat(str(last_run).replace("Z", ""))
+            # A "última rodada" é o LOTE que termina em MAX(ExecutionDate): uma rodada
+            # do orquestrador leva minutos, então uma janela de 2h captura o lote sem
+            # somar rodadas anteriores do mesmo dia (disparos manuais acumulavam antes).
+            batch_start = last - timedelta(hours=2)
+            batch = db.query(f"""
+                SELECT COUNT(DISTINCT TestName) AS n,
+                       COUNT(DISTINCT CASE WHEN TestResult = 'ERROR' THEN TestName END) AS e
+                FROM {T_EXEC}
+                WHERE ExecutionDate > %(start)s AND ExecutionDate <= %(end)s
+            """, {"start": batch_start, "end": last})[0]
+            out["tests_executed"] = batch["n"] or 0
+            out["errors"]         = batch["e"] or 0
             out["stale"] = (now_brt() - last).total_seconds() > 26 * 3600
     except Exception:
         pass
