@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Continuous Audit V2 — Orquestrador
 # MAGIC Executa os testes `ACTIVE` de `tb_test_configurations`.
-# MAGIC Requer o notebook `utils` **no mesmo diretório**.
+# MAGIC Requer o notebook `utils` em `../shared/utils` (estrutura do repo do job).
 
 # COMMAND ----------
 
@@ -13,7 +13,7 @@ os.environ["CA_SCHEMA"]  = "continuous_audit"
 
 # COMMAND ----------
 
-# MAGIC %run ./utils
+# MAGIC %run ../shared/utils
 
 # COMMAND ----------
 
