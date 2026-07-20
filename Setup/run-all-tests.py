@@ -2,7 +2,6 @@
 # MAGIC %md
 # MAGIC # Continuous Audit V2 — Orquestrador
 # MAGIC Executa os testes `ACTIVE` de `tb_test_configurations`.
-# MAGIC Requer o notebook `utils` em `../shared/utils` (estrutura do repo do job).
 
 # COMMAND ----------
 
@@ -13,7 +12,7 @@ os.environ["CA_SCHEMA"]  = "continuous_audit"
 
 # COMMAND ----------
 
-# MAGIC %run ../shared/utils
+# MAGIC %run "/Workspace/GRC/Repositórios/job-databricks-continuous-audit/databricks/notebooks/shared/utils"
 
 # COMMAND ----------
 
