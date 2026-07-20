@@ -6,9 +6,8 @@ command:
 env:
   - name: DATABRICKS_WAREHOUSE_ID
     value: "ed5c06d0f073810c"
-  # Ambiente de dados — troque para produção quando migrar:
-  #   CA_CATALOG: "compliance"   CA_SCHEMA: "continuous_audit"
+  # Ambiente de dados — PRODUÇÃO (cutover 2026-07-19; rollback: sandbox / grc)
   - name: CA_CATALOG
-    value: "sandbox"
+    value: "compliance"
   - name: CA_SCHEMA
-    value: "grc"
+    value: "continuous_audit"
