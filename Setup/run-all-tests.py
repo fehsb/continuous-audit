@@ -6,13 +6,10 @@
 
 # COMMAND ----------
 
-# Ambiente — definido ANTES do %run: o utils lê CA_CATALOG/CA_SCHEMA ao carregar.
-# Job pode sobrescrever via base_parameters (widgets).
+# Ambiente de PRODUÇÃO — definido ANTES do %run (o utils lê ao carregar).
 import os
-dbutils.widgets.text("CA_CATALOG", "compliance")
-dbutils.widgets.text("CA_SCHEMA",  "continuous_audit")
-os.environ["CA_CATALOG"] = dbutils.widgets.get("CA_CATALOG")
-os.environ["CA_SCHEMA"]  = dbutils.widgets.get("CA_SCHEMA")
+os.environ["CA_CATALOG"] = "compliance"
+os.environ["CA_SCHEMA"]  = "continuous_audit"
 
 # COMMAND ----------
 
