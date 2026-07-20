@@ -305,7 +305,13 @@ def health(user: User = Depends(get_user)):
             results[name] = rows[0]["cnt"]
         except Exception as e:
             results[name] = f"ERROR: {str(e)[:100]}"
-    return {"status": "ok", "tables": results, "user": user.email}
+    return {
+        "status": "ok",
+        "env": f"{CATALOG}.{SCHEMA}",
+        "tables": results,
+        "user": user.email,
+        "can_self_review": user.email in SELF_REVIEW_ALLOWED,
+    }
 
 
 # Nível de risco inerente vem da tb_risks: coluna confirmada pelo usuário
