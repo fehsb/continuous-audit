@@ -40,6 +40,17 @@ mover o plano de controle para um schema próprio fica como refactor **pós-migr
 | # | Item | Por quê | Verificação |
 |---|---|---|---|
 | B1 | **Permissão de escrita do SP do app** em `compliance.continuous_audit` (CREATE TABLE, ALTER, INSERT/DELETE) | Sem isso nenhum passo roda | Passo 0 da tela (probe-write) |
+
+> **B1 — diagnóstico real (2026-07-19):** o probe retornou
+> `Catalog 'compliance' has been designated as read-only in current workspace`.
+> Não é grant do SP: o catálogo está com **workspace-catalog binding read-only**
+> neste workspace — ninguém escreve daqui. Soluções:
+> **(A)** admin do metastore muda o binding para Read & Write
+> (Catalog Explorer → `compliance` → aba Workspaces → este workspace), ou
+> **(B)** deployar o app no workspace onde o Job V1 roda (que já escreve em
+> `compliance`) e migrar de lá. Como o app escreve continuamente em produção
+> (configs, FPs, dashboards), ele precisa viver num workspace com escrita —
+> se este workspace permanecer read-only por governança, (B) é o caminho.
 | B2 | **ALTER do `tb_tests_executions` antes de virar o app** | O app faz SELECT de `IsSupressed/IsRecurrent/IsContinued/IncidentCountRaw`; sem as colunas as queries **quebram** (não é só NULL) | Passo 2 da tela; status mostra ✅ por coluna |
 | B3 | **Job V1 desativado no momento em que o Job V2 ativa** | Dois orquestradores = achados duplicados no histórico | Manual (projeto do Job) |
 | B4 | **Seed com frequências REAIS** (o seed da tela já força isso) | 25 testes DAILY em produção = carga e ruído indevidos | `validate` mostra frequências |
