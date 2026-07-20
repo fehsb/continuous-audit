@@ -1,86 +1,84 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 🎯 Continuous Audit V2 — Orquestrador
-# MAGIC >
-# MAGIC > Lê os testes ativos de `{CA_CATALOG}.{CA_SCHEMA}.tb_test_configurations` e executa cada um.
-# MAGIC > O `test_id` é passado para `run_standard_test` para permitir verificação de supressões.
+# MAGIC # Continuous Audit V2 — Orquestrador
+# MAGIC Executa os testes `ACTIVE` de `tb_test_configurations`.
+# MAGIC Requer o notebook `utils` **no mesmo diretório**.
 
 # COMMAND ----------
 
-# MAGIC %run "/Workspace/GRC/Projects/Continuous Audit v2/continuous-audit/Setup/utils"
+# Ambiente — definido ANTES do %run: o utils lê CA_CATALOG/CA_SCHEMA ao carregar.
+# Job pode sobrescrever via base_parameters (widgets).
+import os
+dbutils.widgets.text("CA_CATALOG", "compliance")
+dbutils.widgets.text("CA_SCHEMA",  "continuous_audit")
+os.environ["CA_CATALOG"] = dbutils.widgets.get("CA_CATALOG")
+os.environ["CA_SCHEMA"]  = dbutils.widgets.get("CA_SCHEMA")
 
 # COMMAND ----------
 
-from datetime import datetime
+# MAGIC %run ./utils
+
+# COMMAND ----------
+
 import traceback
 
-# COMMAND ----------
-
-# CATALOG/SCHEMA vêm do %run do utils (parametrizados por CA_CATALOG/CA_SCHEMA)
 CONFIG_TABLE = f"{CATALOG}.{SCHEMA}.tb_test_configurations"
 
-active_tests = (
-    spark.table(CONFIG_TABLE)
-    .filter("status = 'ACTIVE'")
-    .collect()
-)
-
-print(f"📋 {len(active_tests)} teste(s) ativo(s) em {CONFIG_TABLE}.")
+active_tests = [r.asDict() for r in
+                spark.table(CONFIG_TABLE).filter("status = 'ACTIVE'").collect()]
+print(f"📋 {len(active_tests)} teste(s) ativo(s) em {CONFIG_TABLE}")
 
 # COMMAND ----------
 
+executed = skipped = errors = 0
+
 for test in active_tests:
-    test_name    = test["test_name"]
-    test_id      = test["test_id"]
-    query_type   = test["query_type"].upper()
-    query_code   = test["query_code"]
-    imports      = test["imports"] or ""
-    output_table = test["output_table"]
-    description  = test["description"] or ""
-    responsible  = test["responsible_area"] or ""
-    risco_id     = test["risco_id"] or "N/A"
-    threshold    = test["threshold"] if test["threshold"] is not None else 0
-    frequency    = test["frequency"] or "DAILY"
-    notify       = bool(test["should_activate_channel"]) if "should_activate_channel" in test else True
+    test_name = test["test_name"]
+    frequency = test.get("frequency") or "DAILY"
 
     if not should_run_today(frequency):
-        print(f"⏭️  Skipping '{test_name}' (frequency: {frequency})")
+        print(f"⏭️  {test_name} ({frequency})")
+        skipped += 1
         continue
 
-    print(f"▶️  Running: {test_name} [{query_type}]")
+    query_type = (test.get("query_type") or "").upper()
+    threshold  = test["threshold"] if test.get("threshold") is not None else 0
+    notify     = test["should_activate_channel"] if test.get("should_activate_channel") is not None else True
 
+    print(f"▶️  Running: {test_name} [{query_type}]")
     try:
         if query_type == "SQL":
-            df_incidents = execute_sql_test(query_code)
+            df_incidents = execute_sql_test(test["query_code"])
         elif query_type == "PYTHON":
-            df_incidents = execute_python_test(imports, query_code)
+            df_incidents = execute_python_test(test.get("imports") or "", test["query_code"])
         else:
             raise ValueError(f"query_type desconhecido: '{query_type}'")
 
         run_standard_test(
             test_name=test_name,
-            output_table=output_table,
-            description=description,
-            responsible_area=responsible,
+            output_table=test["output_table"],
+            description=test.get("description") or "",
+            responsible_area=test.get("responsible_area") or "",
             threshold=threshold,
             result_df=df_incidents,
             frequency=frequency,
-            risco_id=risco_id,
-            should_activate_channel=notify,
-            test_id=test_id,          # ← enables suppression check
+            risco_id=test.get("risco_id") or "N/A",
+            should_activate_channel=bool(notify),
+            test_id=test["test_id"],   # habilita verificação de supressão
         )
-
+        executed += 1
         print(f"✅ Finished: {test_name}")
 
-    except Exception as e:
+    except Exception:
+        errors += 1
         tb = traceback.format_exc()
         print(f"❌ {test_name} failed:\n{tb}")
         try:
             log_execution(
                 test_name=test_name,
-                description=description,
-                responsible_area=responsible,
-                risco_id=risco_id,
+                description=test.get("description") or "",
+                responsible_area=test.get("responsible_area") or "",
+                risco_id=test.get("risco_id") or "N/A",
                 frequency=frequency,
                 incident_count=0,
                 test_result="ERROR",
@@ -89,9 +87,9 @@ for test in active_tests:
                 error_message=tb,
             )
         except Exception as log_err:
-            print(f"⚠️  Failed to log error for '{test_name}': {log_err}")
-        continue
+            print(f"⚠️  Falha ao logar erro de '{test_name}': {log_err}")
 
 # COMMAND ----------
 
-print(f"\n🏁 Orquestrador finalizado: {now_brt().strftime('%Y-%m-%d %H:%M:%S')} (BRT)")
+print(f"🏁 {now_brt().strftime('%Y-%m-%d %H:%M:%S')} (BRT) — "
+      f"executados: {executed} · pulados: {skipped} · erros: {errors}")
