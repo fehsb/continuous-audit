@@ -1,5 +1,11 @@
 # Runbook — Migração para Produção (`compliance.continuous_audit`)
 
+> **STATUS (2026-07-20): MIGRAÇÃO EXECUTADA.** Passos 0–6 concluídos: app e Job V2
+> rodando em `compliance.continuous_audit`. A tela **Migração PRD** e os endpoints
+> `/api/admin/migration/*` (+ `seed_v1_tests.json`) **já foram removidos do app** —
+> as seções abaixo que os citam são registro histórico do procedimento.
+> Pendências vivas: ver checklist do Passo 7.
+
 Objetivo: mover o sistema V2 **inteiramente** para `compliance.continuous_audit` e
 **desativar o sandbox**. Ao final, nada de operacional roda em `sandbox.grc`.
 
@@ -114,8 +120,10 @@ dashboards com dados reais.
 ### Passo 7 — Consolidar e desligar o sandbox
 Depois de validado (alguns dias de rodadas limpas):
 - [ ] Reativar Slack/SharePoint no utils (**após** a 1ª rodada V2 — ver Riscos).
-- [ ] Trocar os defaults de `CA_CATALOG`/`CA_SCHEMA` para produção (utils.py, app.yaml, widgets dos notebooks).
-- [ ] **Remover a tela Migração PRD** e os endpoints `/api/admin/migration/*` do app.
+- [x] Trocar os defaults de `CA_CATALOG`/`CA_SCHEMA` para produção — app.yaml e
+      orquestrador feitos; `utils.py` mantém default sandbox (o orquestrador seta
+      o env antes do %run, então é inócuo).
+- [x] **Remover a tela Migração PRD** e os endpoints `/api/admin/migration/*` do app (2026-07-20).
 - [ ] Confirmar que nada escreve em `sandbox.grc`; arquivar/dropar as tabelas de lá.
 
 ---
