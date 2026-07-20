@@ -99,8 +99,10 @@ def ensure_schema_exists() -> None:
     """
     try:
         spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
-    except Exception:
-        pass  # Schema already exists or SP lacks CREATE SCHEMA — both are fine
+    except Exception as e:
+        # Esperado quando o SP não tem CREATE SCHEMA e o schema já existe;
+        # logado para não ocultar um erro real (ex.: catálogo errado).
+        print(f"ℹ️  ensure_schema_exists: {e}")
 
 def save_to_table(df: DataFrame, table_base: str) -> None:
     ensure_schema_exists()
@@ -210,22 +212,17 @@ def add_fp_flags(df: DataFrame, test_name: str) -> DataFrame:
     dos demais campos. FPs antigos sem match_criteria continuam funcionando
     por hash da linha inteira (compatibilidade retroativa).
     """
+    # DataFrame API (sem SQL interpolado): test_name entra como valor literal,
+    # imune a aspas/escapes no nome do teste.
     try:
-        fp_rows = spark.sql(f"""
-            SELECT row_hash, match_criteria
-            FROM {CATALOG}.{SCHEMA}.tb_false_positives
-            WHERE test_name = '{test_name}' AND active = true
-        """).collect()
-    except Exception:
-        # Coluna match_criteria pode não existir ainda — cai no schema legado
-        try:
-            fp_rows = spark.sql(f"""
-                SELECT row_hash
-                FROM {CATALOG}.{SCHEMA}.tb_false_positives
-                WHERE test_name = '{test_name}' AND active = true
-            """).collect()
-        except Exception:
-            fp_rows = []
+        fp_tbl = (spark.table(f"{CATALOG}.{SCHEMA}.tb_false_positives")
+                       .filter((col("test_name") == lit(test_name)) & col("active")))
+        # match_criteria pode não existir ainda (schema legado)
+        wanted  = ["row_hash"] + (["match_criteria"] if "match_criteria" in fp_tbl.columns else [])
+        fp_rows = fp_tbl.select(*wanted).collect()
+    except Exception as e:
+        print(f"ℹ️  add_fp_flags: tb_false_positives indisponível ({e}) — seguindo sem FPs")
+        fp_rows = []
 
     available     = set(df.columns)
     criteria_conds = []   # uma Column booleana por FP com critérios
@@ -282,33 +279,33 @@ def add_fp_flags(df: DataFrame, test_name: str) -> DataFrame:
 
 def get_previous_hash(test_name: str) -> dict | None:
     try:
-        rows = spark.sql(f"""
-            SELECT incident_hash, row_count, is_suppressed
-            FROM {CATALOG}.{SCHEMA}.tb_incident_hashes
-            WHERE test_name = '{test_name}'
-            ORDER BY execution_date DESC
-            LIMIT 1
-        """).collect()
+        rows = (spark.table(f"{CATALOG}.{SCHEMA}.tb_incident_hashes")
+                     .filter(col("test_name") == lit(test_name))
+                     .orderBy(col("execution_date").desc())
+                     .limit(1)
+                     .select("incident_hash", "row_count", "is_suppressed")
+                     .collect())
         return rows[0].asDict() if rows else None
-    except Exception:
+    except Exception as e:
+        print(f"ℹ️  get_previous_hash: tb_incident_hashes indisponível ({e}) — tratando como 1ª execução")
         return None
 
 
 def was_previous_result_flagged(test_name: str) -> bool:
     """True se a execução anterior foi FAILED e não estava suprimida."""
     try:
-        rows = spark.sql(f"""
-            SELECT TestResult, IsSupressed
-            FROM {CATALOG}.{SCHEMA}.tb_tests_executions
-            WHERE TestName = '{test_name}'
-            ORDER BY ExecutionDate DESC
-            LIMIT 1
-        """).collect()
+        rows = (spark.table(f"{CATALOG}.{SCHEMA}.tb_tests_executions")
+                     .filter(col("TestName") == lit(test_name))
+                     .orderBy(col("ExecutionDate").desc())
+                     .limit(1)
+                     .select("TestResult", "IsSupressed")
+                     .collect())
         if not rows:
             return False
         r = rows[0].asDict()
         return r.get("TestResult") == "FAILED" and not r.get("IsSupressed", False)
-    except Exception:
+    except Exception as e:
+        print(f"ℹ️  was_previous_result_flagged: consulta falhou ({e}) — assumindo não-flagged")
         return False
 
 # COMMAND ----------
@@ -327,18 +324,15 @@ def get_active_suppression(test_id: str) -> dict | None:
     if not test_id:
         return None
     try:
-        rows = spark.sql(f"""
-            SELECT
-                s.suppression_id,
-                s.linked_entry_id,
-                s.linked_entry_title,
-                s.note
-            FROM {CATALOG}.{SCHEMA}.tb_test_suppressions s
-            LEFT JOIN {T_ENTRIES} e ON e.RiskEntryId = s.linked_entry_id
-            WHERE s.test_id = '{test_id}'
-              AND s.active  = true
-              AND (e.ClosingDate IS NULL OR TRIM(COALESCE(e.ClosingDate, '')) = '')
-        """).collect()
+        sup = (spark.table(f"{CATALOG}.{SCHEMA}.tb_test_suppressions")
+                    .filter((col("test_id") == lit(test_id)) & col("active")))
+        entries = (spark.table(T_ENTRIES)
+                        .select("RiskEntryId", "ClosingDate"))
+        rows = (sup.join(entries, sup["linked_entry_id"] == entries["RiskEntryId"], "left")
+                   .filter(col("ClosingDate").isNull()
+                           | (trim(coalesce(col("ClosingDate"), lit(""))) == ""))
+                   .select("suppression_id", "linked_entry_id", "linked_entry_title", "note")
+                   .collect())
         return rows[0].asDict() if rows else None
     except Exception as ex:
         print(f"⚠️ Suppression check failed (non-critical): {ex}")
@@ -401,7 +395,7 @@ def run_standard_test(
         exec_time = (now_brt() - start).total_seconds()
 
         # Contagem limpa (exclui FPs) determina threshold e alertas
-        incident_count = result_df.filter(col("_is_false_positive") == False).count()
+        incident_count = result_df.filter(~col("_is_false_positive")).count()
         base_result    = "FAILED" if incident_count > threshold else "PASSED"
 
         is_suppressed = False

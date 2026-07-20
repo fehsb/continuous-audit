@@ -18,6 +18,14 @@ os.environ["CA_SCHEMA"]  = "continuous_audit"
 
 import traceback
 
+# Campos consumidos de tb_test_configurations (schema completo: Setup/setup-tables.sql):
+#   test_id (str, obrigatório) · test_name (str, obrigatório)
+#   query_type ("SQL" | "PYTHON", obrigatório — outro valor → ERROR logado)
+#   query_code (str, obrigatório) · imports (str, só PYTHON, opcional)
+#   output_table (str, obrigatório) · threshold (int, default 0)
+#   frequency ("DAILY" | "WEEKLY" | "MONTHLY", default DAILY)
+#   should_activate_channel (bool, default True)
+#   status — apenas 'ACTIVE' é executado
 CONFIG_TABLE = f"{CATALOG}.{SCHEMA}.tb_test_configurations"
 
 active_tests = [r.asDict() for r in
