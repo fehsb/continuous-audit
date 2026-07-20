@@ -55,8 +55,6 @@ SELF_REVIEW_ALLOWED = {
     "fernando.baptista@cerc.com",
 }
 
-ORCHESTRATOR_JOB_ID = os.getenv("ORCHESTRATOR_JOB_ID", "")
-
 T_DASH_VIEWS  = f"{CATALOG}.{SCHEMA}.tb_dashboard_views"
 T_DASH_CHARTS = f"{CATALOG}.{SCHEMA}.tb_dashboard_charts"
 
@@ -1754,39 +1752,11 @@ def list_all_false_positives(user: User = Depends(get_user)):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Routes — orchestrator trigger
+# Routes — orchestrator health
+# O disparo manual foi removido: o Job roda em OUTRO workspace (PRD) e a Jobs
+# API é por workspace — o run agendado (06:00 BRT) e o "Run now" na UI do PRD
+# cobrem os casos de uso.
 # ─────────────────────────────────────────────────────────────────────────────
-@app.get("/api/run-orchestrator")
-def orchestrator_status(user: User = Depends(get_user)):
-    return {"configured": bool(ORCHESTRATOR_JOB_ID)}
-
-
-@app.post("/api/run-orchestrator")
-def run_orchestrator(user: User = Depends(get_user)):
-    """
-    Dispara o job do orquestrador via Databricks Jobs API.
-    Configure ORCHESTRATOR_JOB_ID em app.yaml para habilitar.
-    """
-    if not ORCHESTRATOR_JOB_ID:
-        return {"status": "not_configured",
-                "message": "Adicione ORCHESTRATOR_JOB_ID em app.yaml para habilitar o disparo manual."}
-    try:
-        from databricks.sdk import WorkspaceClient
-        w = WorkspaceClient()
-        # F9 — refuse to double-trigger while a run is already in flight.
-        try:
-            active = list(w.jobs.list_runs(job_id=int(ORCHESTRATOR_JOB_ID),
-                                           active_only=True, limit=1))
-            if active:
-                return {"status": "already_running", "run_id": active[0].run_id}
-        except Exception:
-            pass  # if the probe fails, fall through and trigger normally
-        run = w.jobs.run_now(job_id=int(ORCHESTRATOR_JOB_ID))
-        return {"status": "triggered", "run_id": run.run_id}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao disparar orquestrador: {str(e)}")
-
-
 @app.get("/api/orchestrator-health")
 def orchestrator_health(user: User = Depends(get_user)):
     """X1 — health card: when the daily job last ran, how many tests, how many errors."""
@@ -1819,15 +1789,8 @@ def orchestrator_health(user: User = Depends(get_user)):
                 pass
     except Exception:
         pass
-    if ORCHESTRATOR_JOB_ID:
-        try:
-            from databricks.sdk import WorkspaceClient
-            w = WorkspaceClient()
-            active = list(w.jobs.list_runs(job_id=int(ORCHESTRATOR_JOB_ID),
-                                           active_only=True, limit=1))
-            out["running"] = bool(active)
-        except Exception:
-            pass
+    # "running" fica sempre False: o Job vive no workspace PRD e a Jobs API
+    # é por workspace — mantido no payload pela compatibilidade do frontend.
     return out
 
 

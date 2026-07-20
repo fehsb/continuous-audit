@@ -4015,10 +4015,7 @@ function App() {
   const [saving, setSaving]   = useState(false);
   const [toasts, setToasts]   = useState([]);
   const [lastRef,  setLastRef]  = useState(null);
-  const [running,       setRunning]       = useState(false);
-  const [orchConfigured, setOrchConfigured] = useState(false);
   const [orchHealth, setOrchHealth] = useState(null);              // X1
-  const [runCooldown, setRunCooldown] = useState(false);           // F9
   const [coldTry, setColdTry] = useState(0);                       // U3
   const [theme, setTheme] = usePersistedState("ca.theme", "light"); // D6 — claro por padrão
 
@@ -4071,7 +4068,6 @@ function App() {
 
   useEffect(()=>{
     api.getUser().then(setUser).catch(()=>{});
-    req("GET", "/run-orchestrator").then(r => setOrchConfigured(r?.configured === true)).catch(()=>{});
     api.getOrchHealth().then(setOrchHealth).catch(()=>{});
     api.getRisks().then(r => {
       if (r?.error) {
@@ -4109,27 +4105,6 @@ function App() {
       toast(e.message || "Erro ao salvar teste", "error");
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleRunOrchestrator() {
-    setRunning(true);
-    try {
-      const res = await req("POST", "/run-orchestrator");
-      if (res.status === "not_configured") {
-        toast("⚙️ " + res.message, "error");
-      } else if (res.status === "already_running") {
-        toast(`⏳ O orquestrador já está em execução (run ${res.run_id})`, "warning");
-      } else {
-        toast(`▶ Orquestrador disparado — Run ID: ${res.run_id}`);
-        setRunCooldown(true);
-        setTimeout(()=>setRunCooldown(false), 60000);
-      }
-      api.getOrchHealth().then(setOrchHealth).catch(()=>{});
-    } catch(e) {
-      toast("Erro ao disparar: " + e.message, "error");
-    } finally {
-      setRunning(false);
     }
   }
 
@@ -4214,12 +4189,6 @@ function App() {
             <div className="topbar-title">{page==="tests"?"Testes de Auditoria":page==="review"?"Fila de Revisão":page==="fp"?"Falsos Positivos":page==="mig"?"Migração PRD":"Dashboard"}</div>
             {lastRef&&<span className="topbar-meta">atualizado às {lastRef.toLocaleTimeString("pt-BR",{timeStyle:"short",...TZ_BRT})} (BRT)</span>}
             <button className="btn btn-ghost btn-sm" onClick={loadAll} disabled={loading}><Icon name="refresh" size={13}/> {loading?"Atualizando…":"Atualizar"}</button>
-            {page==="tests"&&<button className="btn btn-ghost btn-sm" onClick={handleRunOrchestrator}
-              disabled={running||runCooldown||!orchConfigured}
-              title={orchConfigured?(runCooldown?"Aguarde — disparo recente":"Dispara o job do orquestrador no Databricks"):"Configure ORCHESTRATOR_JOB_ID em app.yaml para habilitar"}
-              style={!orchConfigured?{opacity:0.4,cursor:"not-allowed"}:{}}>
-              <Icon name="play" size={12}/> {running?"Disparando…":runCooldown?"Disparado ✓":"Executar Testes"}
-            </button>}
             {page==="tests"&&<button className="btn btn-primary" onClick={()=>setEditor({})}>+ Novo Teste</button>}
           </div>
 
