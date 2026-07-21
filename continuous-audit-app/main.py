@@ -2212,6 +2212,33 @@ def get_chart_data(chart_id: str, user: User = Depends(get_user)):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TEMPORÁRIO — remover após uso único.
+# Dropa as 3 tabelas órfãs do sandbox aposentado cujo dono é o SP do app
+# (auto-criadas em runtime; o usuário não tem MANAGE nelas). Lista fixa.
+# ─────────────────────────────────────────────────────────────────────────────
+_SANDBOX_LEFTOVERS = [
+    "sandbox.grc.tb_dashboard_views",
+    "sandbox.grc.tb_dashboard_charts",
+    "sandbox.grc.tb_false_positives_history",
+]
+
+
+@app.post("/api/admin/drop-sandbox-leftovers")
+def drop_sandbox_leftovers(user: User = Depends(get_user)):
+    if user.email not in SELF_REVIEW_ALLOWED:
+        raise HTTPException(403, "Acesso restrito")
+    results = {}
+    for fq in _SANDBOX_LEFTOVERS:
+        try:
+            db.execute(f"DROP TABLE IF EXISTS {fq}")
+            results[fq] = "ok"
+        except Exception as e:
+            results[fq] = f"error: {str(e)[:200]}"
+    all_ok = all(v == "ok" for v in results.values())
+    return {"status": "done" if all_ok else "partial", "tables": results}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Serve frontend
 # ─────────────────────────────────────────────────────────────────────────────
 FRONTEND_INDEX = os.path.join(os.path.dirname(__file__), "frontend", "index.html")

@@ -3875,6 +3875,7 @@ function App() {
   const [toasts, setToasts]   = useState([]);
   const [lastRef,  setLastRef]  = useState(null);
   const [orchHealth, setOrchHealth] = useState(null);              // X1
+  const [dropSbx, setDropSbx] = useState({state:"idle", result:null}); // TEMPORÁRIO — remover após uso
   const [coldTry, setColdTry] = useState(0);                       // U3
   const [theme, setTheme] = usePersistedState("ca.theme", "light"); // D6 — claro por padrão
 
@@ -4054,6 +4055,33 @@ function App() {
               <div className="alert alert-info" style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
                 <div className="spinner" style={{width:14,height:14,borderWidth:2}}/>
                 ❄️ Warehouse iniciando — tentando novamente automaticamente (tentativa {coldTry} de 3)…
+              </div>
+            )}
+            {/* TEMPORÁRIO — dropa as 3 tabelas órfãs do sandbox (dono = SP do app); remover após uso */}
+            {page==="tests"&&user?.can_self_review&&dropSbx.state!=="done"&&(
+              <div className="alert alert-warn" style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14}}>
+                <span style={{flex:1,fontSize:13}}>
+                  🗑️ <strong>Limpeza do sandbox</strong> — dropar as 3 tabelas órfãs
+                  (<code>tb_dashboard_views</code>, <code>tb_dashboard_charts</code>, <code>tb_false_positives_history</code>)
+                  de <code>sandbox.grc</code>, cujo dono é o app.
+                </span>
+                {dropSbx.state==="error"&&<span style={{fontSize:12,color:"var(--danger)",fontFamily:"var(--mono)"}}>
+                  {JSON.stringify(dropSbx.result?.tables||dropSbx.result)}</span>}
+                <button className="btn btn-warning btn-sm" disabled={dropSbx.state==="loading"}
+                  onClick={async()=>{
+                    if(!window.confirm("Dropar as 3 tabelas órfãs de sandbox.grc?")) return;
+                    setDropSbx({state:"loading", result:null});
+                    try {
+                      const r = await req("POST", "/admin/drop-sandbox-leftovers");
+                      setDropSbx({state: r.status==="done"?"done":"error", result:r});
+                      toast(r.status==="done" ? "🗑️ 3 tabelas órfãs removidas — sandbox limpo" : "Drop parcial — veja o detalhe", r.status==="done"?"success":"error");
+                    } catch(e) {
+                      setDropSbx({state:"error", result:{error:e.message}});
+                      toast("Erro: "+e.message, "error");
+                    }
+                  }}>
+                  {dropSbx.state==="loading"?"⏳ Dropando…":"Dropar órfãs"}
+                </button>
               </div>
             )}
             {page==="tests"&&orchHealth&&(()=>{ // X1 — saúde do orquestrador
