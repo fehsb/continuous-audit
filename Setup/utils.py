@@ -39,10 +39,10 @@ import textwrap
 # COMMAND ----------
 
 # Ambiente de dados parametrizável — mesma convenção do app (CA_CATALOG/CA_SCHEMA).
-# Default sandbox/grc por segurança; o Job de produção seta CA_CATALOG=compliance
-# e CA_SCHEMA=continuous_audit (env vars do cluster) para apontar ao alvo real.
-CATALOG   = os.getenv("CA_CATALOG", "sandbox")
-SCHEMA    = os.getenv("CA_SCHEMA",  "grc")
+# Default PRODUÇÃO: o sandbox (sandbox.grc) foi aposentado — default antigo faria
+# uma execução avulsa recriar silenciosamente o schema dropado.
+CATALOG   = os.getenv("CA_CATALOG", "compliance")
+SCHEMA    = os.getenv("CA_SCHEMA",  "continuous_audit")
 T_ENTRIES = os.getenv("COMPLIANCE_ENTRIES_TABLE", "compliance.sharepoint_list.tb_risk_entries")
 
 # Fuso oficial do sistema: Brasília (F8). A sessão Spark e todos os timestamps

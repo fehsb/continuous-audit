@@ -120,11 +120,11 @@ dashboards com dados reais.
 ### Passo 7 — Consolidar e desligar o sandbox
 Depois de validado (alguns dias de rodadas limpas):
 - [ ] Reativar Slack/SharePoint no utils (**após** a 1ª rodada V2 — ver Riscos).
-- [x] Trocar os defaults de `CA_CATALOG`/`CA_SCHEMA` para produção — app.yaml e
-      orquestrador feitos; `utils.py` mantém default sandbox (o orquestrador seta
-      o env antes do %run, então é inócuo).
+- [x] Trocar os defaults de `CA_CATALOG`/`CA_SCHEMA` para produção — app.yaml,
+      orquestrador, `utils.py` e `main.py` (nada recria o sandbox por engano).
 - [x] **Remover a tela Migração PRD** e os endpoints `/api/admin/migration/*` do app (2026-07-20).
-- [ ] Confirmar que nada escreve em `sandbox.grc`; arquivar/dropar as tabelas de lá.
+- [ ] Dropar `sandbox.grc` — rodar `Setup/drop-sandbox.sql` no workspace de dev
+      (inventário → trava de segurança → widget `confirmo=DROP`).
 
 ---
 
