@@ -2,7 +2,8 @@ import os
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
 from databricks import sql
 from databricks.sdk import WorkspaceClient
 
@@ -80,22 +81,39 @@ def _conn():
 BRT_OFFSET = "-03:00"  # Brasília — sem horário de verão desde 2019
 
 
-def _serialize(row: dict) -> dict:
-    """Convert datetime objects to ISO strings for JSON serialization.
+def _to_jsonable(v):
+    """Normaliza um valor do conector para algo JSON-serializável.
 
-    A sessão do warehouse é pinada em America/Sao_Paulo, então o valor que o
-    conector devolve é a HORA DE PAREDE de Brasília — mas às vezes rotulada
-    como UTC (ou sem fuso), o que fazia o navegador reconverter e exibir -3h.
-    Normalizamos: descartamos o rótulo e declaramos o offset real (-03:00),
-    para que qualquer cliente exiba o instante correto.
+    Timestamps: a sessão do warehouse é pinada em America/Sao_Paulo, então o
+    valor devolvido é a HORA DE PAREDE de Brasília — mas às vezes rotulada como
+    UTC (ou sem fuso). Descartamos o rótulo e declaramos o offset real (-03:00).
+
+    Colunas complexas: o conector (Arrow) devolve ARRAY como numpy.ndarray e
+    numéricos como tipos numpy/Decimal — o FastAPI não serializa ndarray e a
+    exceção estoura FORA do try/except dos endpoints (500 "Erro inesperado" na
+    tela, ex.: coluna DistinctIPs do teste users-with-many-distinct-ips-per-day).
+    tolist() cobre ndarray e escalares numpy via duck typing, com recursão para
+    os elementos.
     """
-    out = {}
-    for k, v in row.items():
-        if isinstance(v, datetime):
-            out[k] = v.replace(tzinfo=None).isoformat(timespec="seconds") + BRT_OFFSET
-        else:
-            out[k] = v
-    return out
+    if isinstance(v, datetime):
+        return v.replace(tzinfo=None).isoformat(timespec="seconds") + BRT_OFFSET
+    if isinstance(v, date):
+        return v.isoformat()
+    if isinstance(v, Decimal):
+        return float(v)
+    if isinstance(v, (bytes, bytearray)):
+        return v.decode("utf-8", errors="replace")
+    if hasattr(v, "tolist"):            # numpy.ndarray e escalares numpy
+        return _to_jsonable(v.tolist())
+    if isinstance(v, (list, tuple)):
+        return [_to_jsonable(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _to_jsonable(x) for k, x in v.items()}
+    return v
+
+
+def _serialize(row: dict) -> dict:
+    return {k: _to_jsonable(v) for k, v in row.items()}
 
 
 def query(sql_text: str, params: dict = None) -> list[dict]:
