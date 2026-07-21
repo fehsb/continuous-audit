@@ -123,8 +123,9 @@ Depois de validado (alguns dias de rodadas limpas):
 - [x] Trocar os defaults de `CA_CATALOG`/`CA_SCHEMA` para produção — app.yaml,
       orquestrador, `utils.py` e `main.py` (nada recria o sandbox por engano).
 - [x] **Remover a tela Migração PRD** e os endpoints `/api/admin/migration/*` do app (2026-07-20).
-- [ ] Dropar `sandbox.grc` — rodar `Setup/drop-sandbox.sql` no workspace de dev
-      (inventário → trava de segurança → widget `confirmo=DROP`).
+- [x] Dropar as tabelas do projeto em `sandbox.grc` (2026-07-20) — 30 via
+      `Setup/drop-sandbox.sql`; as 3 órfãs do SP do app via botão temporário
+      (já removido). O schema permanece (compartilhado com outros projetos).
 
 ---
 
