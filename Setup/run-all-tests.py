@@ -115,7 +115,7 @@ try:
     except Exception as _e:
         print(f"⚠️  Níveis de risco indisponíveis para o resumo: {_e}")
     notify_run_summary(RUN_EVENTS, risk_levels=risk_levels,
-                       app_url=os.getenv("CA_APP_URL") or None)
+                       app_url=os.getenv("CA_APP_URL", "https://continuous-audit-4061355422303323.gcp.databricksapps.com/"))
 except Exception as _e:
     print(f"⚠️  Falha ao enviar resumo Slack (rodada não afetada): {_e}")
 

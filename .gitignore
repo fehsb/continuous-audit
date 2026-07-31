@@ -19,3 +19,6 @@ venv/
 
 # Repositório do V1 — só contexto para migração, não versionar
 Repo CA old/
+
+# Clones de outros repositórios (ex.: repo do job Databricks) — não versionar aqui
+repos/
