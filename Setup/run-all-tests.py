@@ -12,11 +12,11 @@ os.environ["CA_SCHEMA"]  = "continuous_audit"
 
 # COMMAND ----------
 
-# MAGIC %run "/Workspace/GRC/Repositórios/job-databricks-continuous-audit/databricks/notebooks/shared/utils"
+# MAGIC %run ../shared/utils
 
 # COMMAND ----------
 
-# MAGIC %run "/Workspace/GRC/Repositórios/job-databricks-continuous-audit/databricks/notebooks/shared/slack_notifier"
+# MAGIC %run ../shared/slack_notifier
 
 # COMMAND ----------
 
