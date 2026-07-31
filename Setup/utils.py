@@ -323,16 +323,17 @@ RUN_EVENTS: list = []
 
 
 def record_run_event(test_name, alert, incident_count=0, risco_id=None,
-                     area=None, notify=False, error=None) -> None:
+                     area=None, notify=False, error=None, description=None) -> None:
     """alert: sem_achados | novo_achado | reincidente | persistente | em_tratamento | erro"""
     RUN_EVENTS.append({
-        "test_name": test_name,
-        "alert":     alert,
-        "count":     int(incident_count or 0),
-        "risco_id":  risco_id or "N/A",
-        "area":      area or "",
-        "notify":    bool(notify),
-        "error":     (str(error)[:180] if error else None),
+        "test_name":   test_name,
+        "alert":       alert,
+        "count":       int(incident_count or 0),
+        "risco_id":    risco_id or "N/A",
+        "area":        area or "",
+        "notify":      bool(notify),
+        "error":       (str(error)[:180] if error else None),
+        "description": (str(description)[:600] if description else None),
     })
 
 # COMMAND ----------
@@ -487,11 +488,12 @@ def run_standard_test(
                  else "reincidente"   if is_recurrent
                  else "novo_achado")
         record_run_event(test_name, alert, incident_count, risco_id,
-                         responsible_area, notify=should_notify)
+                         responsible_area, notify=should_notify,
+                         description=description)
 
     except Exception as e:
         record_run_event(test_name, "erro", 0, risco_id, responsible_area,
-                         notify=True, error=e)
+                         notify=True, error=e, description=description)
         log_execution(
             test_name=test_name,
             description=description,

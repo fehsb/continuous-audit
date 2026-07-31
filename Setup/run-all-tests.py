@@ -88,7 +88,8 @@ for test in active_tests:
         try:
             _last = [l for l in tb.strip().splitlines() if l.strip()][-1][:180]
             record_run_event(test_name, "erro", 0, test.get("risco_id"),
-                             test.get("responsible_area"), notify=True, error=_last)
+                             test.get("responsible_area"), notify=True, error=_last,
+                             description=test.get("description"))
         except Exception:
             pass
         try:
