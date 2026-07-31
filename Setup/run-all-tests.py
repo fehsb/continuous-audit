@@ -47,17 +47,44 @@ print(f"📋 {len(active_tests)} teste(s) ativo(s) em {CONFIG_TABLE}")
 executed = skipped = errors = 0
 
 for test in active_tests:
-    test_name = test["test_name"]
-    frequency = test.get("frequency") or "DAILY"
-
-    if not should_run_today(frequency):
-        print(f"⏭️  {test_name} ({frequency})")
-        skipped += 1
-        continue
-
+    test_name  = test.get("test_name") or f"<sem nome: {test.get('test_id')}>"
+    frequency  = test.get("frequency") or "DAILY"
     query_type = (test.get("query_type") or "").upper()
     threshold  = test["threshold"] if test.get("threshold") is not None else 0
     notify     = test["should_activate_channel"] if test.get("should_activate_channel") is not None else True
+
+    # A checagem de agenda é do TESTE, não da rodada: uma frequência inválida
+    # (gravada via API/SQL, onde o campo é texto livre) vira erro deste teste em
+    # vez de abortar o laço e impedir que as notificações sequer rodem.
+    try:
+        roda_hoje = should_run_today(frequency)
+    except Exception as freq_err:
+        errors += 1
+        print(f"❌ {test_name}: {freq_err}")
+        try:
+            record_run_event(test_name, "erro", 0, test.get("risco_id"),
+                             test.get("responsible_area"), notify=True,
+                             error=freq_err, description=test.get("description"))
+            log_execution(
+                test_name=test_name,
+                description=test.get("description") or "",
+                responsible_area=test.get("responsible_area") or "",
+                risco_id=test.get("risco_id") or "N/A",
+                frequency="DAILY",
+                incident_count=0,
+                test_result="ERROR",
+                exec_time_sec=0.0,
+                threshold=threshold,
+                error_message=str(freq_err),
+            )
+        except Exception as log_err:
+            print(f"⚠️  Falha ao logar frequência inválida de '{test_name}': {log_err}")
+        continue
+
+    if not roda_hoje:
+        print(f"⏭️  {test_name} ({frequency})")
+        skipped += 1
+        continue
 
     print(f"▶️  Running: {test_name} [{query_type}]")
     try:
@@ -125,8 +152,9 @@ try:
 except Exception as _e:
     print(f"⚠️  Dados de risco indisponíveis para as notificações: {_e}")
 
+_slack_ok = False
 try:
-    notify_run_summary(RUN_EVENTS, risk_levels=risk_levels, app_url=_APP_URL)
+    _slack_ok = bool(notify_run_summary(RUN_EVENTS, risk_levels=risk_levels, app_url=_APP_URL))
 except Exception as _e:
     print(f"⚠️  Falha ao enviar resumo Slack (rodada não afetada): {_e}")
 
@@ -134,6 +162,17 @@ try:
     notify_planner_cards(RUN_EVENTS, risk_info=risk_info, app_url=_APP_URL)
 except Exception as _e:
     print(f"⚠️  Falha nos cards do Planner (rodada não afetada): {_e}")
+    # Fase inteira caiu: nenhum card desta rodada foi escrito.
+    for _t in list(PENDING_HASHES):
+        record_notify_failure(_t)
+
+# Só agora o "já avisamos sobre isso" é consolidado. Se o resumo não saiu, os
+# hashes são descartados e a próxima rodada anuncia os achados de novo — repetir
+# é aceitável, perder o alerta não é.
+if _slack_ok:
+    print(f"✅ {flush_pending_hashes()} hash(es) consolidado(s) após a notificação.")
+else:
+    discard_pending_hashes("o resumo da rodada não foi enviado ao Slack")
 
 # COMMAND ----------
 

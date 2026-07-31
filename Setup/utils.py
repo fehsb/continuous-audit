@@ -278,10 +278,16 @@ def get_previous_hash(test_name: str) -> dict | None:
 
 
 def was_previous_result_flagged(test_name: str) -> bool:
-    """True se a execução anterior foi FAILED e não estava suprimida."""
+    """True se a última execução CONCLUSIVA foi FAILED e não estava suprimida.
+
+    Linhas ERROR são ignoradas de propósito: uma falha técnica entre duas rodadas
+    não diz nada sobre os achados. Considerá-la fazia a rodada seguinte não achar
+    o FAILED anterior e declarar REINCIDÊNCIA por achados que nunca saíram.
+    """
     try:
         rows = (spark.table(f"{CATALOG}.{SCHEMA}.tb_tests_executions")
-                     .filter(col("TestName") == lit(test_name))
+                     .filter((col("TestName") == lit(test_name)) &
+                             (col("TestResult").isin("FAILED", "PASSED")))
                      .orderBy(col("ExecutionDate").desc())
                      .limit(1)
                      .select("TestResult", "IsSupressed")
@@ -305,6 +311,52 @@ def was_previous_result_flagged(test_name: str) -> bool:
 # orquestrador envia as notificações consolidadas ao final (Slack/Planner).
 # Zerado a cada import do utils.
 RUN_EVENTS: list = []
+
+# Hashes retidos até a notificação da rodada sair, e testes cuja notificação falhou.
+# O hash é o registro de "já avisamos sobre isso": gravá-lo antes do envio fazia um
+# achado não notificado virar "persistente" na rodada seguinte — e nunca mais ser
+# anunciado. Retendo, uma falha de envio só custa uma repetição, nunca um silêncio.
+PENDING_HASHES: dict = {}
+NOTIFY_FAILURES: list = []
+
+
+def record_notify_failure(test_name) -> None:
+    """Marca um teste cuja notificação não saiu — o hash dele não será consolidado."""
+    if test_name and test_name not in NOTIFY_FAILURES:
+        NOTIFY_FAILURES.append(test_name)
+
+
+def flush_pending_hashes() -> int:
+    """Consolida os hashes retidos, pulando os testes que falharam ao notificar.
+
+    Chamar APENAS depois que o resumo da rodada foi enviado.
+    """
+    gravados = 0
+    for test_name, args in list(PENDING_HASHES.items()):
+        if test_name in NOTIFY_FAILURES:
+            continue
+        try:
+            save_incident_hash(*args)
+            gravados += 1
+        except Exception as e:
+            print(f"⚠️  Falha ao gravar hash de '{test_name}': {e} — será re-anunciado")
+        PENDING_HASHES.pop(test_name, None)
+    retidos = list(PENDING_HASHES)
+    if retidos:
+        PENDING_HASHES.clear()
+        print(f"↻ {len(retidos)} teste(s) sem notificação confirmada — serão "
+              f"anunciados de novo na próxima rodada: {', '.join(retidos)}")
+    return gravados
+
+
+def discard_pending_hashes(motivo: str) -> int:
+    """Descarta tudo que estava retido: a rodada seguinte trata como achado novo."""
+    n = len(PENDING_HASHES)
+    if n:
+        print(f"⚠️  {n} hash(es) descartado(s) — {motivo}. Serão anunciados de novo "
+              f"na próxima rodada: {', '.join(PENDING_HASHES)}")
+        PENDING_HASHES.clear()
+    return n
 
 
 def record_run_event(test_name, alert, incident_count=0, risco_id=None,
@@ -447,7 +499,14 @@ def run_standard_test(
 
         # ── Persistência ──────────────────────────────────────────────────────
         save_to_table(result_df, output_table)
-        save_incident_hash(test_name, curr_hash, incident_count_raw, is_suppressed, is_recurrent)
+        # Quando a rodada VAI notificar, o hash só é consolidado depois que o
+        # resumo sai (ver flush_pending_hashes no fim do orquestrador).
+        if should_notify:
+            PENDING_HASHES[test_name] = (test_name, curr_hash, incident_count_raw,
+                                         is_suppressed, is_recurrent)
+        else:
+            save_incident_hash(test_name, curr_hash, incident_count_raw,
+                               is_suppressed, is_recurrent)
         log_execution(
             test_name=test_name,
             description=description,
