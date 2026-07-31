@@ -175,6 +175,16 @@
     tbody tr:last-child td{border-bottom:none}
     tbody tr{cursor:pointer;transition:background .1s}
     tbody tr:hover td{background:var(--row-hover)}
+    th.th-sort{cursor:pointer;user-select:none;white-space:nowrap;transition:color .1s}
+    th.th-sort:hover{color:var(--text)}
+    .th-arrow{margin-left:4px;color:var(--primary)}
+    .th-sort:hover .th-arrow-ghost{opacity:.45}
+    .th-arrow-ghost{margin-left:4px;opacity:0;transition:opacity .1s}
+    tr.grp-row{cursor:default}
+    tr.grp-row td{background:var(--surface-alt);padding:7px 13px;font-family:var(--mono);font-size:10.5px;
+      text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600}
+    tr.grp-row:hover td{background:var(--surface-alt)}
+    .grp-meta{text-transform:none;letter-spacing:0;font-weight:500;color:var(--text-subtle)}
     .cell-name{font-weight:600;letter-spacing:-.1px}
     .cell-sub{font-size:10px;color:var(--text-subtle);font-family:var(--mono);margin-top:2px}
     .cell-mono{font-family:var(--mono);font-size:11.5px;color:var(--text-muted)}
@@ -2686,7 +2696,8 @@ function ReviewQueue({tests, user, onApprove, onReject, loading}) {
   );
 }
 
-// ── MultiStatusSelect ────────────────────────────────────────────────────────
+// ── MultiSelect ──────────────────────────────────────────────────────────────
+// Filtro de múltipla escolha genérico (status, categoria, …). Seleção vazia = tudo.
 const ALL_STATUSES = [
   {value:"ACTIVE",         label:"Ativo"},
   {value:"DRAFT",          label:"Rascunho"},
@@ -2697,7 +2708,7 @@ const ALL_STATUSES = [
   {value:"CANCELLED",      label:"Cancelado"},
 ];
 
-function MultiStatusSelect({selected, onChange}) {
+function MultiSelect({options, selected, onChange, allLabel, unit, minWidth=160}) {
   const [open, setOpen] = useState(false);
   const ref = useRef();
 
@@ -2716,23 +2727,23 @@ function MultiStatusSelect({selected, onChange}) {
   }
 
   const label = selected.length === 0
-    ? "Todos os status"
+    ? allLabel
     : selected.length === 1
-      ? (ALL_STATUSES.find(s => s.value === selected[0])?.label || selected[0])
-      : `${selected.length} status`;
+      ? (options.find(s => s.value === selected[0])?.label || selected[0])
+      : `${selected.length} ${unit}`;
 
   return (
     <div style={{position:"relative"}} ref={ref}>
       <button
         className="sel-filter"
         onClick={()=>setOpen(o=>!o)}
-        style={{display:"flex",alignItems:"center",gap:8,minWidth:160,cursor:"pointer",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"var(--rs)",padding:"6px 10px",fontFamily:"var(--font)",fontSize:13,color:"var(--text)"}}
+        style={{display:"flex",alignItems:"center",gap:8,minWidth,cursor:"pointer",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"var(--rs)",padding:"6px 10px",fontFamily:"var(--font)",fontSize:13,color:"var(--text)"}}
       >
         <span style={{flex:1,textAlign:"left"}}>{label}</span>
         <span style={{color:"var(--text-subtle)",fontSize:10}}>▼</span>
       </button>
       {open && (
-        <div style={{position:"absolute",top:"100%",left:0,zIndex:50,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--rs)",boxShadow:"var(--sh)",minWidth:180,marginTop:3,padding:"4px 0"}}>
+        <div style={{position:"absolute",top:"100%",left:0,zIndex:50,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--rs)",boxShadow:"var(--sh)",minWidth:180,maxHeight:320,overflowY:"auto",marginTop:3,padding:"4px 0"}}>
           <div
             style={{padding:"7px 12px",cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:8,borderBottom:"1px solid var(--border)",marginBottom:4}}
             onClick={()=>onChange([])}
@@ -2740,9 +2751,9 @@ function MultiStatusSelect({selected, onChange}) {
             <span style={{width:14,height:14,border:"1px solid var(--border-strong)",borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:selected.length===0?"var(--primary)":"transparent",background:selected.length===0?"var(--primary-soft)":"white"}}>
               {selected.length===0?"✓":""}
             </span>
-            <span style={{color:selected.length===0?"var(--primary)":"var(--text-muted)"}}>Todos os status</span>
+            <span style={{color:selected.length===0?"var(--primary)":"var(--text-muted)"}}>{allLabel}</span>
           </div>
-          {ALL_STATUSES.map(s=>{
+          {options.map(s=>{
             const checked = selected.includes(s.value);
             return (
               <div
@@ -2755,10 +2766,11 @@ function MultiStatusSelect({selected, onChange}) {
                 <span style={{width:14,height:14,border:`1px solid ${checked?"var(--primary)":"var(--border-strong)"}`,borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",background:checked?"var(--primary)":"white",flexShrink:0}}>
                   {checked?"✓":""}
                 </span>
-                <span style={{color:checked?"var(--primary)":"var(--text)"}}>
+                <span style={{color:checked?"var(--primary)":"var(--text)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                   {s.label}
                 </span>
-                {checked && <span style={{marginLeft:"auto",width:6,height:6,borderRadius:"50%",background:"var(--primary)"}}/>}
+                {s.hint!=null && <span style={{marginLeft:"auto",fontFamily:"var(--mono)",fontSize:10.5,color:"var(--text-subtle)"}}>{s.hint}</span>}
+                {checked && <span style={{marginLeft:s.hint!=null?6:"auto",width:6,height:6,borderRadius:"50%",background:"var(--primary)",flexShrink:0}}/>}
               </div>
             );
           })}
@@ -2787,84 +2799,171 @@ function TestList({tests, loading, onSelect, onNew, risks}) {
   const RISK_RANK = {alto:3, medio:2, baixo:1};
   const [search,   setSearch]   = useState("");
   const [statuses, setStatuses] = usePersistedState("ca.testFilter", ["ACTIVE","PAUSED","UNDER_REVIEW","DRAFT","REJECTED"]);
+  const [cats,     setCats]     = usePersistedState("ca.testCats", []);          // [] = todas
+  const [grouped,  setGrouped]  = usePersistedState("ca.testGroup", false);
   const [sort,     setSort]     = usePersistedState("ca.testSort", {key:"updated", dir:"desc"});  // U7
+
+  // Categorias existentes + quantos testes cada uma tem (independe dos filtros
+  // ativos, para a lista de opções não sumir conforme você filtra).
+  const NO_CAT = "__sem_categoria__";   // sentinela: testes sem categoria preenchida
+  const catCount = {};
+  tests.forEach(t => { const c = t.category || NO_CAT; catCount[c] = (catCount[c]||0) + 1; });
+  const catOptions = Object.keys(catCount)
+    .sort((a,b) => a===NO_CAT ? 1 : b===NO_CAT ? -1 : a.localeCompare(b))
+    .map(c => ({value:c, label: c===NO_CAT ? "Sem categoria" : c, hint: catCount[c]}));
 
   const filtered = tests.filter(t=>{
     const q=search.toLowerCase();
     const ms=(t.test_name||"").toLowerCase().includes(q)||(t.responsible_area||"").toLowerCase().includes(q)||(t.category||"").toLowerCase().includes(q);
     const ss=statuses.length===0 || statuses.includes(t.status);
-    return ms && ss;
+    const cs=cats.length===0 || cats.includes(t.category || NO_CAT);
+    return ms && ss && cs;
   });
 
-  // U7 — ordenação client-side com direção alternável
+  // U7 — ordenação client-side com direção alternável, em todas as colunas.
+  // Colunas categóricas ordenam por severidade/cadência (não pelo alfabeto):
+  // é assim que a auditoria lê a tabela. Getter que devolve null = "sem valor",
+  // e valor ausente afunda para o fim em qualquer direção.
+  const FREQ_RANK  = {DAILY:1, WEEKLY:2, MONTHLY:3};
+  const ALERT_RANK = {erro:6, reincidente:5, novo_achado:4, persistente:3, em_tratamento:2, sem_achados:1, nunca_rodou:0};
   const SORT_GET = {
-    name:      t => (t.test_name||"").toLowerCase(),
-    area:      t => (t.responsible_area||"").toLowerCase(),
-    last_run:  t => t.last_run || "",
-    incidents: t => t.last_incident_count ?? -1,
-    status:    t => t.status || "",
-    updated:   t => t.updated_at || "",
-    risk:      t => { const r = riskMap[t.risco_id]; const c = r && r.RiskLevel ? riskLevelClass(r.RiskLevel) : null; return c ? (RISK_RANK[c]||1) : 0; },
+    name:      t => (t.test_name||"").toLowerCase() || null,
+    area:      t => (t.responsible_area||"").toLowerCase() || null,
+    category:  t => (t.category||"").toLowerCase() || null,
+    last_run:  t => t.last_run || null,
+    incidents: t => t.last_incident_count ?? null,
+    updated:   t => t.updated_at || null,
+    risk:      t => { const r = riskMap[t.risco_id]; const c = r && r.RiskLevel ? riskLevelClass(r.RiskLevel) : null; return c ? (RISK_RANK[c]||1) : null; },
+    freq:      t => FREQ_RANK[(t.frequency||"").toUpperCase()] ?? null,
+    alert:     t => ALERT_RANK[t.last_alert_status] ?? null,
+    status:    t => { const i = ALL_STATUSES.findIndex(s=>s.value===t.status); return i<0 ? null : i; },
+    // Tendência: variação do último ponto contra a média dos anteriores, em
+    // proporção — assim um teste que saltou de 2 para 20 sobe acima de um que
+    // foi de 1000 para 1100. Desc = quem mais piorou primeiro.
+    trend:     t => {
+      const tr = t.trend;
+      if (!tr || tr.length < 2) return null;
+      const last = tr[tr.length-1].n || 0;
+      const prev = tr.slice(0,-1).map(p => p.n || 0);
+      const base = prev.reduce((a,b)=>a+b,0) / prev.length;
+      return base === 0 ? (last > 0 ? 1 : 0) : (last - base) / base;
+    },
   };
   const getv = SORT_GET[sort.key] || SORT_GET.updated;
-  const sorted = [...filtered].sort((a,b)=>{
+  const tie  = (a,b) => (a.test_name||"").localeCompare(b.test_name||"");
+  const byCurrentSort = (a,b) => {
     const va=getv(a), vb=getv(b);
+    const ea = va===null || va===undefined, eb = vb===null || vb===undefined;
+    if (ea || eb) return ea && eb ? tie(a,b) : (ea ? 1 : -1);
     const c = va<vb ? -1 : va>vb ? 1 : 0;
-    return sort.dir==="asc" ? c : -c;
-  });
-  function toggleSort(key) {
-    setSort(s => s.key===key ? {key, dir: s.dir==="asc"?"desc":"asc"} : {key, dir: key==="name"||key==="area"?"asc":"desc"});
+    return (sort.dir==="asc" ? c : -c) || tie(a,b);
+  };
+  const sorted = [...filtered].sort(byCurrentSort);
+
+  // Agrupamento: blocos por categoria (ordem alfabética, "Sem categoria" no fim),
+  // com a ordenação escolhida aplicada dentro de cada bloco.
+  const groups = [];
+  if (grouped) {
+    const bag = {};
+    sorted.forEach(t => { const c = t.category || NO_CAT; (bag[c] = bag[c] || []).push(t); });
+    Object.keys(bag)
+      .sort((a,b) => a===NO_CAT ? 1 : b===NO_CAT ? -1 : a.localeCompare(b))
+      .forEach(c => groups.push({key:c, label: c===NO_CAT ? "Sem categoria" : c, rows: bag[c]}));
   }
-  const Th = ({k, children, style}) => (
-    <th style={{cursor:"pointer",userSelect:"none",whiteSpace:"nowrap",...style}} onClick={()=>toggleSort(k)}
-        title="Ordenar por esta coluna">
-      {children}{sort.key===k && <span style={{marginLeft:4,color:"var(--primary)"}}>{sort.dir==="asc"?"▲":"▼"}</span>}
+
+  function toggleSort(key) {
+    setSort(s => s.key===key ? {key, dir: s.dir==="asc"?"desc":"asc"}
+                             : {key, dir: (key==="name"||key==="area"||key==="category") ? "asc" : "desc"});
+  }
+  const Arrow = ({k}) => sort.key===k
+    ? <span className="th-arrow">{sort.dir==="asc"?"▲":"▼"}</span>
+    : <span className="th-arrow-ghost">▼</span>;
+  const Th = ({k, children, style, hint, className}) => (
+    <th className={`th-sort${className?" "+className:""}`} style={style} onClick={()=>toggleSort(k)}
+        title={hint || "Ordenar por esta coluna"}>
+      {children}<Arrow k={k}/>
     </th>
   );
+
+  const COLS = 9;
+  const rowsOf = list => list.map(t=>(
+    <tr key={t.test_id} onClick={()=>onSelect(t)}>
+      <td>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <div className="cell-name">{t.test_name}</div>
+          {t.has_pending_review&&<span className="badge badge-review" style={{fontSize:9}} title="Há uma alteração aguardando aprovação">⏳ Alteração pendente</span>}
+        </div>
+        {t.category&&!grouped&&<div className="cell-sub">{t.category}</div>}
+      </td>
+      <td style={{fontSize:12.5,color:"var(--text-muted)"}}>{t.responsible_area||"—"}</td>
+      <td><RiskBadge risk={riskMap[t.risco_id]}/></td>
+      <td className="cell-mono" style={{fontSize:11}}>{fmtFreq(t.frequency)}</td>
+      <td className="cell-mono"><FmtRel dt={t.last_run}/></td>
+      <td className="cell-trend"><Sparkline trend={t.trend}/></td>
+      <td><AlertStatusBadge status={t.last_alert_status}/></td>
+      <td>{t.last_incident_count!=null?<span className="cell-count" style={{color:t.last_incident_count>0?"var(--danger)":"var(--success)"}}>{fmtNum(t.last_incident_count)}</span>:<span style={{color:"var(--text-subtle)"}}>—</span>}</td>
+      <td><StatusBadge s={t.status}/></td>
+    </tr>
+  ));
 
   return (
     <div className="table-card">
       <div className="table-toolbar">
         <span className="table-title">Testes de Auditoria</span>
         <input className="inp-search" placeholder="Buscar..." value={search} onChange={e=>setSearch(e.target.value)}/>
-        <MultiStatusSelect selected={statuses} onChange={setStatuses}/>
+        <MultiSelect options={ALL_STATUSES} selected={statuses} onChange={setStatuses}
+                     allLabel="Todos os status" unit="status"/>
+        <MultiSelect options={catOptions} selected={cats} onChange={setCats}
+                     allLabel="Todas as categorias" unit="categorias" minWidth={180}/>
+        <button className={`btn btn-xs ${grouped?"btn-primary":"btn-ghost"}`}
+                onClick={()=>setGrouped(g=>!g)}
+                title="Agrupar as linhas por categoria de teste">
+          {grouped?"▣":"▤"} Agrupar
+        </button>
         <button className="btn btn-primary" onClick={onNew}>+ Novo Teste</button>
       </div>
       {loading?<div className="loading"><div className="spinner"/>Carregando...</div>:
        sorted.length===0?<div className="empty"><div className="empty-icon">🔎</div><div className="empty-title">Nenhum teste encontrado</div></div>:(
         <table>
           <thead><tr>
-            <Th k="name">Teste</Th>
+            <th className="th-sort" style={{whiteSpace:"nowrap"}}>
+              <span onClick={()=>toggleSort("name")} title="Ordenar pelo nome do teste">
+                Teste<Arrow k="name"/>
+              </span>
+              {!grouped && (
+                <span onClick={()=>toggleSort("category")} title="Ordenar por categoria"
+                      style={{marginLeft:9,opacity:.75}}>
+                  · categoria<Arrow k="category"/>
+                </span>
+              )}
+            </th>
             <Th k="area">Área</Th>
-            <Th k="risk">Risco</Th>
-            <th>Freq.</th>
+            <Th k="risk" hint="Ordenar por risco inerente (Alto → Baixo)">Risco</Th>
+            <Th k="freq" hint="Ordenar por cadência (Diária → Mensal)">Freq.</Th>
             <Th k="last_run">Última Execução</Th>
-            <th className="col-trend">Tendência</th>
-            <th>Alerta</th>
+            <Th k="trend" className="col-trend" hint="Ordenar pela variação recente dos achados">Tendência</Th>
+            <Th k="alert" hint="Ordenar por gravidade do alerta (Erro → Sem achados)">Alerta</Th>
             <Th k="incidents" style={{textAlign:"left"}}>Achados</Th>
             <Th k="status">Status</Th>
           </tr></thead>
-          <tbody>
-            {sorted.map(t=>(
-              <tr key={t.test_id} onClick={()=>onSelect(t)}>
-                <td>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                    <div className="cell-name">{t.test_name}</div>
-                    {t.has_pending_review&&<span className="badge badge-review" style={{fontSize:9}} title="Há uma alteração aguardando aprovação">⏳ Alteração pendente</span>}
-                  </div>
-                  {t.category&&<div className="cell-sub">{t.category}</div>}
-                </td>
-                <td style={{fontSize:12.5,color:"var(--text-muted)"}}>{t.responsible_area||"—"}</td>
-                <td><RiskBadge risk={riskMap[t.risco_id]}/></td>
-                <td className="cell-mono" style={{fontSize:11}}>{fmtFreq(t.frequency)}</td>
-                <td className="cell-mono"><FmtRel dt={t.last_run}/></td>
-                <td className="cell-trend"><Sparkline trend={t.trend}/></td>
-                <td><AlertStatusBadge status={t.last_alert_status}/></td>
-                <td>{t.last_incident_count!=null?<span className="cell-count" style={{color:t.last_incident_count>0?"var(--danger)":"var(--success)"}}>{fmtNum(t.last_incident_count)}</span>:<span style={{color:"var(--text-subtle)"}}>—</span>}</td>
-                <td><StatusBadge s={t.status}/></td>
-              </tr>
-            ))}
-          </tbody>
+          {grouped
+            ? groups.map(g=>{
+                const comAchados = g.rows.filter(r=>(r.last_incident_count||0)>0).length;
+                return (
+                  <tbody key={g.key}>
+                    <tr className="grp-row">
+                      <td colSpan={COLS}>
+                        {g.label}
+                        <span className="grp-meta"> · {g.rows.length} teste{g.rows.length>1?"s":""}
+                          {comAchados>0 && <span style={{color:"var(--danger)"}}> · {comAchados} com achados</span>}
+                        </span>
+                      </td>
+                    </tr>
+                    {rowsOf(g.rows)}
+                  </tbody>
+                );
+              })
+            : <tbody>{rowsOf(sorted)}</tbody>}
         </table>
       )}
     </div>
