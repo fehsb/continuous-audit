@@ -20,6 +20,10 @@ os.environ["CA_SCHEMA"]  = "continuous_audit"
 
 # COMMAND ----------
 
+# MAGIC %run ../shared/planner_notifier
+
+# COMMAND ----------
+
 import traceback
 
 # Campos consumidos de tb_test_configurations (schema completo: Setup/setup-tables.sql):
@@ -105,19 +109,28 @@ for test in active_tests:
 
 # COMMAND ----------
 
-# Resumo consolidado no Slack — 1 mensagem por rodada, só quando há trigger
-# (novo achado / reincidente / erro). Nunca derruba a rodada.
+# Notificações da rodada — Slack (resumo) e Planner (cards com dedup).
+# Cada canal em try/except próprio: nunca derrubam a rodada nem um ao outro.
+_APP_URL = os.getenv("CA_APP_URL", "https://continuous-audit-4061355422303323.gcp.databricksapps.com/")
+
+risk_levels, risk_info = {}, {}
 try:
-    risk_levels = {}
-    try:
-        _rl = spark.sql(f"SELECT RiskId, R2InherentLevel FROM {T_RISKS}").collect()
-        risk_levels = {r["RiskId"]: r["R2InherentLevel"] for r in _rl if r["RiskId"]}
-    except Exception as _e:
-        print(f"⚠️  Níveis de risco indisponíveis para o resumo: {_e}")
-    notify_run_summary(RUN_EVENTS, risk_levels=risk_levels,
-                       app_url=os.getenv("CA_APP_URL", "https://continuous-audit-4061355422303323.gcp.databricksapps.com/"))
+    _rl = spark.sql(f"SELECT RiskId, RiskTitle, R2InherentLevel FROM {T_RISKS}").collect()
+    risk_levels = {r["RiskId"]: r["R2InherentLevel"] for r in _rl if r["RiskId"]}
+    risk_info   = {r["RiskId"]: {"title": r["RiskTitle"], "level": r["R2InherentLevel"]}
+                   for r in _rl if r["RiskId"]}
+except Exception as _e:
+    print(f"⚠️  Dados de risco indisponíveis para as notificações: {_e}")
+
+try:
+    notify_run_summary(RUN_EVENTS, risk_levels=risk_levels, app_url=_APP_URL)
 except Exception as _e:
     print(f"⚠️  Falha ao enviar resumo Slack (rodada não afetada): {_e}")
+
+try:
+    notify_planner_cards(RUN_EVENTS, risk_info=risk_info, app_url=_APP_URL)
+except Exception as _e:
+    print(f"⚠️  Falha nos cards do Planner (rodada não afetada): {_e}")
 
 # COMMAND ----------
 
