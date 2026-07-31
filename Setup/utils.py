@@ -1,22 +1,15 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 🛠️ Continuous Audit V2 — Shared Utils
-# MAGIC >
-# MAGIC > **Mudanças nesta versão:**
-# MAGIC > - `compute_incident_hash` — SHA256 do conjunto de achados (exceto ArchiveDate)
-# MAGIC > - `get_active_suppression` — verifica se teste tem supressão ativa com entry aberta
-# MAGIC > - `get_previous_hash` / `was_previous_result_flagged` — detecta continuidade vs reincidência
-# MAGIC > - `run_standard_test` — lógica completa de alerta inteligente
-# MAGIC > - `log_execution` — novos campos `is_suppressed` e `is_recurrent`
+# MAGIC # Continuous Audit — Shared Utils
+# MAGIC Motor compartilhado do orquestrador: execução dos testes (SQL/Python),
+# MAGIC hash de achados (persistência × reincidência), supressões por apontamento,
+# MAGIC falsos positivos por critérios, log de execuções e coleta de eventos para
+# MAGIC as notificações consolidadas (Slack/Planner). Timestamps em America/Sao_Paulo.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Imports
-
-# COMMAND ----------
-
-# Slack and SharePoint disabled in sandbox — re-enable via %run when migrating to production.
 
 # COMMAND ----------
 
@@ -38,16 +31,14 @@ import textwrap
 
 # COMMAND ----------
 
-# Ambiente de dados parametrizável — mesma convenção do app (CA_CATALOG/CA_SCHEMA).
-# Default PRODUÇÃO: o sandbox (sandbox.grc) foi aposentado — default antigo faria
-# uma execução avulsa recriar silenciosamente o schema dropado.
+# Ambiente de dados parametrizável via CA_CATALOG/CA_SCHEMA (default: produção).
 CATALOG   = os.getenv("CA_CATALOG", "compliance")
 SCHEMA    = os.getenv("CA_SCHEMA",  "continuous_audit")
 T_ENTRIES = os.getenv("COMPLIANCE_ENTRIES_TABLE", "compliance.sharepoint_list.tb_risk_entries")
 T_RISKS   = os.getenv("COMPLIANCE_RISKS_TABLE",   "compliance.sharepoint_list.tb_risks")
 
-# Fuso oficial do sistema: Brasília (F8). A sessão Spark e todos os timestamps
-# gravados usam America/Sao_Paulo — o app (main.py/db.py) segue a mesma regra.
+# Fuso oficial do sistema: Brasília. A sessão Spark e todos os timestamps
+# gravados usam America/Sao_Paulo — o app segue a mesma regra.
 from zoneinfo import ZoneInfo
 BRT = ZoneInfo("America/Sao_Paulo")
 
@@ -58,14 +49,8 @@ except Exception:
 
 
 def now_brt() -> datetime:
-    """Agora em Brasília, COM tzinfo (aware).
-
-    Datetime aware é convertido pelo Spark para o instante correto
-    independentemente do timezone da sessão ou do cluster — a versão naive
-    dependia do spark.sql.session.timeZone estar em BRT; quando a sessão
-    ficava em UTC, a parede de Brasília era gravada como UTC (instante 3h
-    atrás de verdade), e o app exibia a rodada 3h no passado.
-    """
+    """Agora em Brasília, com tzinfo (aware) — o Spark converte para o instante
+    correto independentemente do timezone da sessão ou do cluster."""
     return datetime.now(BRT)
 
 # COMMAND ----------
@@ -76,7 +61,7 @@ def now_brt() -> datetime:
 # COMMAND ----------
 
 def should_run_today(frequency: str) -> bool:
-    today    = now_brt()   # fronteiras de dia/semana/mês seguem Brasília (F8)
+    today    = now_brt()   # fronteiras de dia/semana/mês seguem Brasília
     weekday  = today.weekday()
     day      = today.day
     frequency = frequency.upper()
@@ -317,8 +302,8 @@ def was_previous_result_flagged(test_name: str) -> bool:
 # COMMAND ----------
 
 # Coletor da rodada: cada teste executado registra seu desfecho aqui e o
-# orquestrador envia UM resumo consolidado no Slack ao final (substitui a
-# mensagem-por-teste do V1, que gerava ruído). Zerado a cada import do utils.
+# orquestrador envia as notificações consolidadas ao final (Slack/Planner).
+# Zerado a cada import do utils.
 RUN_EVENTS: list = []
 
 

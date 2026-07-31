@@ -1,7 +1,9 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Continuous Audit V2 — Orquestrador
-# MAGIC Executa os testes `ACTIVE` de `tb_test_configurations`.
+# MAGIC # Continuous Audit — Orquestrador
+# MAGIC Executa os testes `ACTIVE` de `tb_test_configurations` e, ao final,
+# MAGIC envia as notificações consolidadas da rodada (resumo no Slack e
+# MAGIC cards no Planner, apenas quando há triggers).
 
 # COMMAND ----------
 
