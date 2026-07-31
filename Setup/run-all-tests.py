@@ -16,6 +16,10 @@ os.environ["CA_SCHEMA"]  = "continuous_audit"
 
 # COMMAND ----------
 
+# MAGIC %run "/Workspace/GRC/Repositórios/job-databricks-continuous-audit/databricks/notebooks/shared/slack_notifier"
+
+# COMMAND ----------
+
 import traceback
 
 # Campos consumidos de tb_test_configurations (schema completo: Setup/setup-tables.sql):
@@ -78,6 +82,12 @@ for test in active_tests:
         tb = traceback.format_exc()
         print(f"❌ {test_name} failed:\n{tb}")
         try:
+            _last = [l for l in tb.strip().splitlines() if l.strip()][-1][:180]
+            record_run_event(test_name, "erro", 0, test.get("risco_id"),
+                             test.get("responsible_area"), notify=True, error=_last)
+        except Exception:
+            pass
+        try:
             log_execution(
                 test_name=test_name,
                 description=test.get("description") or "",
@@ -92,6 +102,22 @@ for test in active_tests:
             )
         except Exception as log_err:
             print(f"⚠️  Falha ao logar erro de '{test_name}': {log_err}")
+
+# COMMAND ----------
+
+# Resumo consolidado no Slack — 1 mensagem por rodada, só quando há trigger
+# (novo achado / reincidente / erro). Nunca derruba a rodada.
+try:
+    risk_levels = {}
+    try:
+        _rl = spark.sql(f"SELECT RiskId, R2InherentLevel FROM {T_RISKS}").collect()
+        risk_levels = {r["RiskId"]: r["R2InherentLevel"] for r in _rl if r["RiskId"]}
+    except Exception as _e:
+        print(f"⚠️  Níveis de risco indisponíveis para o resumo: {_e}")
+    notify_run_summary(RUN_EVENTS, risk_levels=risk_levels,
+                       app_url=os.getenv("CA_APP_URL") or None)
+except Exception as _e:
+    print(f"⚠️  Falha ao enviar resumo Slack (rodada não afetada): {_e}")
 
 # COMMAND ----------
 

@@ -44,6 +44,7 @@ import textwrap
 CATALOG   = os.getenv("CA_CATALOG", "compliance")
 SCHEMA    = os.getenv("CA_SCHEMA",  "continuous_audit")
 T_ENTRIES = os.getenv("COMPLIANCE_ENTRIES_TABLE", "compliance.sharepoint_list.tb_risk_entries")
+T_RISKS   = os.getenv("COMPLIANCE_RISKS_TABLE",   "compliance.sharepoint_list.tb_risks")
 
 # Fuso oficial do sistema: Brasília (F8). A sessão Spark e todos os timestamps
 # gravados usam America/Sao_Paulo — o app (main.py/db.py) segue a mesma regra.
@@ -311,6 +312,32 @@ def was_previous_result_flagged(test_name: str) -> bool:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Run events — notificação consolidada
+
+# COMMAND ----------
+
+# Coletor da rodada: cada teste executado registra seu desfecho aqui e o
+# orquestrador envia UM resumo consolidado no Slack ao final (substitui a
+# mensagem-por-teste do V1, que gerava ruído). Zerado a cada import do utils.
+RUN_EVENTS: list = []
+
+
+def record_run_event(test_name, alert, incident_count=0, risco_id=None,
+                     area=None, notify=False, error=None) -> None:
+    """alert: sem_achados | novo_achado | reincidente | persistente | em_tratamento | erro"""
+    RUN_EVENTS.append({
+        "test_name": test_name,
+        "alert":     alert,
+        "count":     int(incident_count or 0),
+        "risco_id":  risco_id or "N/A",
+        "area":      area or "",
+        "notify":    bool(notify),
+        "error":     (str(error)[:180] if error else None),
+    })
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Suppression helpers
 
 # COMMAND ----------
@@ -453,11 +480,18 @@ def run_standard_test(
             is_continued=is_continued,
         )
 
-        # ── Notificação (reativar em produção) ────────────────────────────────
-        if should_notify:
-            pass  # notify_slack_incident(...) / update_sharepoint_trigger(...)
+        # ── Evento para o resumo consolidado da rodada (Slack) ────────────────
+        alert = ("sem_achados"   if base_result == "PASSED"
+                 else "em_tratamento" if is_suppressed
+                 else "persistente"   if is_continued
+                 else "reincidente"   if is_recurrent
+                 else "novo_achado")
+        record_run_event(test_name, alert, incident_count, risco_id,
+                         responsible_area, notify=should_notify)
 
     except Exception as e:
+        record_run_event(test_name, "erro", 0, risco_id, responsible_area,
+                         notify=True, error=e)
         log_execution(
             test_name=test_name,
             description=description,
