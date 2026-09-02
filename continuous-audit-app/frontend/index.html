@@ -841,11 +841,11 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
   async function runPreview() {
     // Validate query before running
     if (!form.query_code?.trim()) {
-      setPreview({success:false, error:"Escreva o código antes de validar."});
+      setPreview({success:false, error_kind:"local", error:"Escreva o código antes de validar."});
       return;
     }
     if (hits.length) {
-      setPreview({success:false, error:`Remova os padrões bloqueados antes de testar: ${hits.join(", ")}`});
+      setPreview({success:false, error_kind:"local", error:`Remova os padrões bloqueados antes de testar: ${hits.join(", ")}`});
       return;
     }
     setTestLoading(true);
@@ -1039,7 +1039,7 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
               )}
               {form.query_type==="SQL" && !testLoading && !tested && (
                 <span style={{fontSize:11,color:"var(--text-subtle)"}}>
-                  Executa a query com LIMIT 10 e mostra o resultado
+                  Executa a query com LIMIT 10, com as suas permissões, e mostra o resultado
                 </span>
               )}
               {tested && !testLoading && (
@@ -1079,10 +1079,7 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
                   )}
                 </div>
               ) : (
-                <div style={{padding:"14px 16px",background:"var(--danger-soft)"}}>
-                  <div style={{fontWeight:600,fontSize:13,color:"var(--danger)",marginBottom:6}}>✗ Erro — corrija antes de submeter</div>
-                  <code style={{fontSize:11,color:"var(--danger)",display:"block",whiteSpace:"pre-wrap",lineHeight:1.7}}>{preview.error}</code>
-                </div>
+                <PreviewError preview={preview}/>
               )
             )}
           </div>
@@ -2222,6 +2219,46 @@ function ConfirmDeleteDialog({test, onConfirm, onCancel}) {
   );
 }
 
+// ── PreviewError ──────────────────────────────────────────────────────────────
+// Erro do preview em linguagem de gente: título por categoria (error_kind vindo
+// do backend), mensagem acionável e o texto cru do Databricks colapsado.
+const PREVIEW_ERR_TITLES = {
+  no_token:          "Autorização necessária",
+  permission_denied: "Sem permissão",
+  not_found:         "Objeto não encontrado",
+  bad_column:        "Coluna inexistente",
+  syntax:            "Erro de sintaxe",
+  expired:           "Sessão expirada",
+  local:             "Antes de testar",
+  unknown:           "Erro na query",
+};
+
+function PreviewError({preview, compact}) {
+  const kind  = preview?.error_kind || "unknown";
+  const title = PREVIEW_ERR_TITLES[kind] || PREVIEW_ERR_TITLES.unknown;
+  const raw   = preview?.raw;
+  const fs    = compact ? 12 : 13;
+  return (
+    <div style={{padding: compact?"12px 14px":"14px 16px", background:"var(--danger-soft)"}}>
+      <div style={{fontWeight:600,fontSize:fs,color:"var(--danger)",marginBottom:6}}>✗ {title}</div>
+      <div style={{fontSize:fs-0.5,color:"var(--danger)",lineHeight:1.6,whiteSpace:"pre-wrap"}}>
+        {preview?.error}
+      </div>
+      {raw && raw !== preview?.error && (
+        <details style={{marginTop:8}}>
+          <summary style={{fontSize:11,color:"var(--danger)",cursor:"pointer"}}>Detalhe técnico do Databricks</summary>
+          <code style={{display:"block",marginTop:6,fontSize:11,color:"var(--danger)",whiteSpace:"pre-wrap",lineHeight:1.7}}>{raw}</code>
+        </details>
+      )}
+      {kind !== "local" && (
+        <div style={{marginTop:8,fontSize:11,color:"var(--text-muted)"}}>
+          O teste roda com as suas permissões, não com as do app.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── RunPreviewInline ──────────────────────────────────────────────────────────
 function RunPreviewInline({test}) {
   const [preview,  setPreview]  = useState(null);
@@ -2274,10 +2311,7 @@ function RunPreviewInline({test}) {
             ) : <div style={{fontSize:12,color:"var(--success)"}}>{preview.message}</div>}
           </div>
         ) : (
-          <div style={{padding:"12px 14px",background:"var(--danger-soft)"}}>
-            <div style={{fontWeight:600,fontSize:12,color:"var(--danger)",marginBottom:6}}>✗ Erro na query</div>
-            <code style={{fontSize:11,color:"var(--danger)",whiteSpace:"pre-wrap",lineHeight:1.7}}>{preview?.error}</code>
-          </div>
+          <PreviewError preview={preview} compact/>
         )
       )}
     </div>

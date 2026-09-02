@@ -40,11 +40,14 @@ def _get_token() -> str:
     return auth_header.replace("Bearer ", "")
 
 
-def _new_connection():
+def _new_connection(access_token: str = None):
+    """access_token=None → service principal do app (via _get_token).
+    Um token explícito é usado apenas pelo preview (query_as), para rodar a
+    query com a identidade do próprio usuário."""
     return sql.connect(
         server_hostname=DATABRICKS_HOST,
         http_path=HTTP_PATH,
-        access_token=_get_token(),
+        access_token=access_token or _get_token(),
         _socket_timeout=30,
         # Pin the SQL session to Brasília so current_timestamp()/DATE() agree
         # with the timestamps the app writes via now_brt() (F8).
@@ -124,6 +127,33 @@ def query(sql_text: str, params: dict = None) -> list[dict]:
                 return []
             cols = [c[0] for c in cur.description]
             return [_serialize(dict(zip(cols, row))) for row in cur.fetchall()]
+
+
+def query_as(sql_text: str, access_token: str, params: dict = None) -> list[dict]:
+    """Executa uma query com a IDENTIDADE DO USUÁRIO (OBO), não com a service
+    principal do app.
+
+    Usada só pelo preview de teste (/api/run-preview): a query que o usuário
+    escreveu tem que rodar com o acesso dele. Se rodasse na SP, qualquer autor
+    de teste ganharia, através do app, leitura de tudo que a SP enxerga —
+    contornando o Unity Catalog.
+
+    A conexão é dedicada e fechada aqui: NUNCA entra no holder de _request_db,
+    senão a conexão do usuário seria reaproveitada pelas outras queries da mesma
+    requisição, que devem continuar rodando na SP.
+    """
+    if not access_token:
+        raise ValueError("query_as exige um access_token do usuário")
+    conn = _new_connection(access_token)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql_text, params or {})
+            if not cur.description:
+                return []
+            cols = [c[0] for c in cur.description]
+            return [_serialize(dict(zip(cols, row))) for row in cur.fetchall()]
+    finally:
+        conn.close()
 
 
 def execute(sql_text: str, params: dict = None) -> None:

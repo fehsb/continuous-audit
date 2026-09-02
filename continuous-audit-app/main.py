@@ -687,24 +687,107 @@ def get_hashes(test_id: str, user: User = Depends(get_user)):
     """, {"name": test["test_name"]})
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Preview — a query de teste roda SEMPRE com a permissão de quem clicou
+#
+# O resto do app usa a service principal (leitura/escrita das tabelas de
+# controle do Continuous Audit). O preview, não: ele executa SQL arbitrário que
+# o usuário escreveu, então tem que rodar com o token dele — caso contrário o
+# app viraria um bypass do Unity Catalog, dando a qualquer autor de teste acesso
+# de leitura a tudo que a SP enxerga.
+#
+# O token chega no header `X-Forwarded-Access-Token`, que o Databricks Apps só
+# encaminha quando o app declara `user_api_scopes` (ver docs/obo-preview.md).
+# Sem token NÃO há fallback para a SP: o preview falha pedindo a autorização.
+# ─────────────────────────────────────────────────────────────────────────────
+def _dev_access_token() -> Optional[str]:
+    """Fora do Databricks Apps (dev local) não existe header encaminhado, e o
+    DATABRICKS_TOKEN do ambiente já é o PAT pessoal de quem está rodando — ou
+    seja, a mesma identidade. Dentro do Apps (DATABRICKS_APP_PORT definido)
+    devolve None de propósito, para não cair na SP."""
+    if os.getenv("DATABRICKS_APP_PORT"):
+        return None
+    return os.getenv("DATABRICKS_TOKEN") or None
+
+
+def _err_object(raw: str) -> Optional[str]:
+    """Extrai o nome do objeto citado no erro: `cat`.`sch`.`tbl` ou 'cat.sch.tbl'."""
+    m = re.search(r"(?:`[^`\n]+`)(?:\s*\.\s*`[^`\n]+`)*", raw)
+    if m:
+        parts = re.findall(r"`([^`\n]+)`", m.group(0))
+        if parts:
+            return ".".join(parts)
+    m = re.search(r"\bon\s+\w+\s+'([^']+)'", raw, re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+def _classify_query_error(exc: Exception) -> dict:
+    """Traduz o erro cru do Databricks em {error_kind, error, raw}.
+
+    `error` continua sendo o campo que a tela mostra; `raw` guarda o texto
+    original para o detalhe técnico colapsado.
+    """
+    raw = str(exc)
+    up  = raw.upper()
+    obj = _err_object(raw)
+    alvo = f" `{obj}`" if obj else ""
+
+    if "PERMISSION_DENIED" in up or "INSUFFICIENT_PERMISSIONS" in up or "DOES NOT HAVE" in up:
+        kind = "permission_denied"
+        msg  = (f"Você não tem permissão de leitura em{alvo or ' um dos objetos da query'}. "
+                "O teste roda com o SEU acesso — peça o grant ao dono do dado e tente de novo.")
+    elif "TABLE_OR_VIEW_NOT_FOUND" in up or "SCHEMA_NOT_FOUND" in up or "CATALOG_NOT_FOUND" in up:
+        kind = "not_found"
+        msg  = (f"Tabela ou view{alvo or ''} não existe — ou você não tem acesso para enxergá-la. "
+                "Confira o nome completo (catálogo.schema.tabela).")
+    elif "UNRESOLVED_COLUMN" in up or "UNRESOLVED_ROUTINE" in up:
+        kind = "bad_column"
+        msg  = f"Coluna ou função{alvo or ''} não existe nas tabelas consultadas."
+    elif "PARSE_SYNTAX_ERROR" in up or "SYNTAX ERROR" in up:
+        kind = "syntax"
+        pos  = re.search(r"\(line (\d+), pos (\d+)\)", raw)
+        onde = f" na linha {pos.group(1)}, posição {pos.group(2)}" if pos else ""
+        msg  = f"Erro de sintaxe no SQL{onde}."
+    elif ("401" in raw or "INVALID ACCESS TOKEN" in up
+          or "EXPIRED" in up or "UNAUTHENTICATED" in up):
+        kind = "expired"
+        msg  = "Sua sessão expirou. Recarregue a página e teste a query de novo."
+    else:
+        kind = "unknown"
+        msg  = "A query falhou no warehouse. Veja o detalhe técnico abaixo."
+
+    return {"error_kind": kind, "error": msg, "raw": raw}
+
+
 @app.post("/api/run-preview")
-def run_preview(body: RunPreviewIn, user: User = Depends(get_user)):
+def run_preview(body: RunPreviewIn,
+                user: User = Depends(get_user),
+                x_forwarded_access_token: Optional[str] = Header(None)):
     qt = (body.query_type or "").upper()
     if qt == "SQL":
+        token = x_forwarded_access_token or _dev_access_token()
+        if not token:
+            return {
+                "success": False,
+                "error_kind": "no_token",
+                "error": ("O app não recebeu a sua autorização para consultar dados. "
+                          "Recarregue a página e aceite a autorização; se o problema "
+                          "persistir, avise o time do Continuous Audit."),
+            }
         try:
             sql = body.query_code.strip().rstrip(";")
-            rows = db.query(f"SELECT * FROM ({sql}) __preview LIMIT 10")
+            rows = db.query_as(f"SELECT * FROM ({sql}) __preview LIMIT 10", token)
             cols = list(rows[0].keys()) if rows else []
             return {"success": True, "row_count": len(rows), "columns": cols, "sample": rows}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, **_classify_query_error(e)}
     elif qt == "PYTHON":
         try:
             ast.parse(f"{body.imports or ''}\n{body.query_code}")
             return {"success": True, "message": "Sintaxe OK — o código não é executado aqui; a execução real ocorre no orquestrador. Garanta que o resultado é atribuído a `df_incidents`."}
         except SyntaxError as e:
-            return {"success": False, "error": f"Erro de sintaxe na linha {e.lineno}: {e.msg}"}
-    return {"success": False, "error": f"Tipo desconhecido: {qt}"}
+            return {"success": False, "error_kind": "syntax", "error": f"Erro de sintaxe na linha {e.lineno}: {e.msg}"}
+    return {"success": False, "error_kind": "unknown", "error": f"Tipo desconhecido: {qt}"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
