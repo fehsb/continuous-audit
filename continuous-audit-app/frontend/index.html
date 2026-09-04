@@ -2653,10 +2653,29 @@ function QueryDiff({oldCode, newCode}) {
 }
 
 // ── ReviewQueue ───────────────────────────────────────────────────────────────
-function ReviewQueue({tests, user, onApprove, onReject, loading}) {
+// RV3 — campos comparados (versão ativa × proposta) numa alteração de teste ativo.
+const PENDING_FIELDS = [
+  {live:"description",             pending:"pending_description",             label:"Descrição"},
+  {live:"risco_id",                pending:"pending_risco_id",                label:"Risco"},
+  {live:"responsible_area",        pending:"pending_responsible_area",        label:"Área"},
+  {live:"category",                pending:"pending_category",                label:"Categoria"},
+  {live:"threshold",               pending:"pending_threshold",               label:"Threshold"},
+  {live:"frequency",               pending:"pending_frequency",               label:"Frequência", fmt: fmtFreq},
+  {live:"query_type",              pending:"pending_query_type",              label:"Tipo"},
+  {live:"should_activate_channel", pending:"pending_should_activate_channel", label:"Canal Slack", fmt: v => v ? "Ativo" : "Inativo"},
+];
+const normVal = v => (typeof v === "boolean" ? String(v) : String(v ?? "").trim());
+const dispVal = x => (x === null || x === undefined || x === "") ? "—" : String(x);   // 0 é valor válido
+
+function ReviewQueue({tests, user, risks, onApprove, onReject, loading}) {
   const [rejectId, setRid] = useState(null);
   const [reason, setReason]= useState("");
   const [acting, setActing]= useState(null);
+  // RV1 — resolve o título/nível do risco (mesmo padrão do TestList)
+  const risksArr = Array.isArray(risks) ? risks : (risks?.data || []);
+  const riskMap = {};
+  risksArr.forEach(r => { riskMap[r.RiskId] = r; });
+  const riskLabel = id => { const r = riskMap[id]; return id ? (r?.RiskTitle ? `${id} — ${r.RiskTitle}` : id) : "—"; };
   const queue = tests.filter(t=>["UNDER_REVIEW","PENDING_DELETE"].includes(t.status) || t.has_pending_review);
 
   async function doApprove(t){setActing(t.test_id);await onApprove(t);setActing(null);}
@@ -2665,43 +2684,95 @@ function ReviewQueue({tests, user, onApprove, onReject, loading}) {
   if(loading) return <div className="loading"><div className="spinner"/>Carregando...</div>;
   if(!queue.length) return <div className="empty" style={{marginTop:40}}><div className="empty-icon">✅</div><div className="empty-title">Fila vazia</div><div className="empty-sub">Nenhum teste aguardando revisão.</div></div>;
 
+  const lbl = {marginBottom:3};
+  const para = {fontSize:13,lineHeight:1.6,maxWidth:"80ch",margin:0};
+  const warn = {fontSize:12.5,color:"var(--warning)"};
+
   return (
     <div>
       {queue.map(t=>{
-        const isPending = !!t.has_pending_review;
-        const submitter = isPending ? (t.pending_submitted_by||t.created_by) : t.created_by;
-        const isOwn   = submitter===user?.email && !user?.can_self_review;
-        const isDel   = t.status==="PENDING_DELETE";
+        const isDel     = t.status==="PENDING_DELETE";
+        // Numa solicitação de exclusão o card mostra a versão ATIVA (a edição pendente será descartada).
+        const isPending = !!t.has_pending_review && !isDel;
+        const requester = isDel ? (t.delete_requested_by||t.created_by)
+                        : isPending ? (t.pending_submitted_by||t.created_by) : t.created_by;
+        // Backend bloqueia o criador; na exclusão bloqueamos também quem solicitou.
+        const isOwn = !user?.can_self_review && (requester===user?.email || (isDel && t.created_by===user?.email));
+        const v = k => isPending ? t[`pending_${k}`] : t[k];      // valor a exibir no card
+        const desc    = v("description");
+        const riscoId = v("risco_id");
+        const risk    = riskMap[riscoId];
+        const changes = isPending ? PENDING_FIELDS.filter(f => normVal(t[f.live]) !== normVal(t[f.pending])) : [];
+        const queryChanged = isPending && (normVal(t.query_code) !== normVal(t.pending_query_code)
+                                        || normVal(t.imports)    !== normVal(t.pending_imports));
         return (
           <div className={`review-card${isDel?" delete-req":""}`} key={t.test_id}>
             <div className="review-card-head">
               {t.category&&<span style={{fontFamily:"var(--mono)",fontSize:10,color:"var(--text-subtle)"}}>{t.category}/</span>}
               <span className="review-card-title">{t.test_name}</span>
-              <TypeBadge t={isPending?(t.pending_query_type||t.query_type):t.query_type}/>
+              <TypeBadge t={v("query_type")||t.query_type}/>
               <span className="badge badge-draft" style={{fontSize:10}}>v{t.version}</span>
               {isDel&&<span className="badge badge-pdelete">🗑 Solicitação de Exclusão</span>}
-              {isPending&&!isDel&&<span className="badge badge-review" style={{fontSize:10}}>⏳ Alteração em teste ativo</span>}
+              {isPending&&<span className="badge badge-review" style={{fontSize:10}}>⏳ Alteração em teste ativo</span>}
             </div>
+
+            {/* RV2 — objetivo do teste, visível nos 3 tipos de card */}
+            <div style={{marginBottom:11}}>
+              <div className="meta-lbl" style={lbl}>Objetivo do teste</div>
+              {desc ? <p style={para}>{desc}</p> : <span style={warn}>⚠ Sem descrição</span>}
+            </div>
+
             <div className="review-meta">
-              <div className="meta-item"><span className="meta-lbl">Solicitado por</span><span className="meta-val">{submitter}</span></div>
-              <div className="meta-item"><span className="meta-lbl">Área</span><span className="meta-val">{(isPending?t.pending_responsible_area:t.responsible_area)||"—"}</span></div>
-              <div className="meta-item"><span className="meta-lbl">Risco</span><span className="meta-val">{(isPending?t.pending_risco_id:t.risco_id)||"—"}</span></div>
-              {!isDel&&<><div className="meta-item"><span className="meta-lbl">Threshold</span><span className="meta-val">{isPending?t.pending_threshold:t.threshold}</span></div><div className="meta-item"><span className="meta-lbl">Frequência</span><span className="meta-val">{fmtFreq(isPending?t.pending_frequency:t.frequency)}</span></div></>}
+              <div className="meta-item"><span className="meta-lbl">Solicitado por</span><span className="meta-val">{requester||"—"}</span></div>
+              <div className="meta-item"><span className="meta-lbl">Área</span><span className="meta-val">{v("responsible_area")||"—"}</span></div>
+              {/* RV1 — risco com código, título e nível */}
+              <div className="meta-item"><span className="meta-lbl">Risco</span>
+                <span className="meta-val" style={{display:"inline-flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  {riscoId
+                    ? <><span style={{fontFamily:"var(--mono)",color:"var(--primary)"}}>{riscoId}</span>
+                        {risk?.RiskTitle&&<span>{risk.RiskTitle}</span>}
+                        {risk?.RiskLevel&&<RiskBadge risk={risk}/>}</>
+                    : <span style={{color:"var(--text-subtle)"}}>Sem risco vinculado</span>}
+                </span>
+              </div>
+              {!isDel&&<><div className="meta-item"><span className="meta-lbl">Threshold</span><span className="meta-val">{v("threshold")}</span></div><div className="meta-item"><span className="meta-lbl">Frequência</span><span className="meta-val">{fmtFreq(v("frequency"))}</span></div></>}
             </div>
             {isDel
               ? <>
+                  {/* RV4 — motivo informado por quem solicitou a exclusão */}
+                  <div style={{marginBottom:11}}>
+                    <div className="meta-lbl" style={lbl}>Motivo da exclusão</div>
+                    {t.delete_reason ? <p style={{...para,fontStyle:"italic"}}>"{t.delete_reason}"</p> : <span style={warn}>⚠ Motivo não informado</span>}
+                  </div>
                   <div className="alert alert-warn">⚠️ Aprovar irá <strong>cancelar</strong> permanentemente. Rejeitar mantém o teste ativo.</div>
                   {t.has_pending_review && <div className="alert alert-info" style={{fontSize:12}}>ℹ️ Este teste também possui uma <strong>edição pendente</strong> — ela será descartada se a exclusão for aprovada.</div>}
                 </>
               : isPending
                 ? <>
-                    <div className="alert alert-info" style={{fontSize:12}}>✎ Alteração proposta para um teste <strong>ativo</strong>. A versão aprovada continua rodando até você aprovar. Abaixo, o que muda na query:</div>
+                    <div className="alert alert-info" style={{fontSize:12}}>✎ Alteração proposta para um teste <strong>ativo</strong>. A versão aprovada continua rodando até você aprovar. Abaixo, tudo o que muda:</div>
+                    {/* RV3 — mudanças de metadados (antes → depois) além do diff da query */}
+                    <div style={{marginBottom:12}}>
+                      <div className="meta-lbl" style={{marginBottom:4}}>O que muda além da query</div>
+                      {changes.length
+                        ? <ul style={{margin:0,paddingLeft:18,fontSize:12.5,lineHeight:1.7}}>
+                            {changes.map(f=>{ const fmt = f.fmt || (f.live==="risco_id" ? riskLabel : (x=>x)); return (
+                              <li key={f.live}><strong>{f.label}:</strong>{" "}
+                                <span style={{color:"var(--danger)",textDecoration:"line-through"}}>{dispVal(fmt(t[f.live]))}</span>
+                                {" → "}
+                                <span style={{color:"var(--success)",fontWeight:600}}>{dispVal(fmt(t[f.pending]))}</span>
+                              </li>);})}
+                          </ul>
+                        : <span style={{fontSize:12.5,color:"var(--text-subtle)"}}>{queryChanged?"Somente a query foi alterada.":"Nenhuma diferença em relação à versão ativa."}</span>}
+                    </div>
                     <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:4,fontFamily:"var(--mono)"}}>Diff da query (— remove · + adiciona)</div>
-                    <div style={{marginBottom:12}}><QueryDiff oldCode={t.query_code} newCode={t.pending_query_code}/></div>
+                    <div style={{marginBottom:12}}>
+                      {queryChanged
+                        ? <QueryDiff oldCode={t.query_code} newCode={t.pending_query_code}/>
+                        : <span style={{fontSize:12.5,color:"var(--text-subtle)"}}>Query sem alterações.</span>}
+                    </div>
                     <RunPreviewInline test={{...t, query_type: t.pending_query_type||t.query_type, imports: t.pending_imports, query_code: t.pending_query_code}}/>
                   </>
                 : <>
-                    {t.description&&<p style={{fontSize:12.5,color:"var(--text-muted)",marginBottom:10}}>{t.description}</p>}
                     {t.query_type==="PYTHON"&&t.imports&&<div className="code-preview imports" style={{marginBottom:8,maxHeight:72}}>{t.imports}</div>}
                     <div className="code-preview query" style={{marginBottom:12,maxHeight:160}}>{t.query_code}</div>
                     <RunPreviewInline test={t}/>
@@ -4283,7 +4354,7 @@ function App() {
                 <TestList tests={tests} loading={loading} risks={risks} onSelect={setDetail} onNew={()=>setEditor({})}/>
               </>
             )}
-            {page==="review"&&<ReviewQueue tests={tests} user={user} loading={loading} onApprove={t=>doAction(()=>api.approve(t.test_id),`"${t.test_name}" aprovado ✓`)} onReject={(t,r)=>doAction(()=>api.reject(t.test_id,r),`"${t.test_name}" rejeitado`)}/>}
+            {page==="review"&&<ReviewQueue tests={tests} user={user} risks={risks} loading={loading} onApprove={t=>doAction(()=>api.approve(t.test_id),`"${t.test_name}" aprovado ✓`)} onReject={(t,r)=>doAction(()=>api.reject(t.test_id,r),`"${t.test_name}" rejeitado`)}/>}
             {page==="fp"&&<FalsePositivesPage toast={toast} onOpenTest={testId=>{
               const t = tests.find(x=>x.test_id===testId);
               if (t) { setPage("tests"); setDetail(t); }

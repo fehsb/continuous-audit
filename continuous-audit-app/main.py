@@ -814,6 +814,24 @@ def _attach_trends(rows: list) -> list:
     return rows
 
 
+# RV4 — o motivo da solicitação de exclusão vive só no histórico (F7: a linha
+# viva não é "manchada"). A fila de revisão precisa dele, então a listagem traz
+# a última linha PENDING_DELETE do histórico — só enquanto o teste está nesse status.
+_DELETE_REQ_COLS = """
+                CASE WHEN c.status = 'PENDING_DELETE' THEN dh.comment    END AS delete_reason,
+                CASE WHEN c.status = 'PENDING_DELETE' THEN dh.changed_by END AS delete_requested_by,
+                CASE WHEN c.status = 'PENDING_DELETE' THEN dh.changed_at END AS delete_requested_at,
+"""
+_DELETE_REQ_JOIN = f"""
+            LEFT JOIN (
+                SELECT test_id, comment, changed_by, changed_at,
+                    ROW_NUMBER() OVER (PARTITION BY test_id ORDER BY changed_at DESC) AS rn
+                FROM {T_HIST}
+                WHERE status_after = 'PENDING_DELETE'
+            ) dh ON dh.test_id = c.test_id AND dh.rn = 1
+"""
+
+
 @app.get("/api/tests")
 def list_tests(user: User = Depends(get_user)):
     try:
@@ -826,6 +844,7 @@ def list_tests(user: User = Depends(get_user)):
                     AS last_incident_count,
                 COALESCE(fp_agg.fp_count, 0) AS active_fp_count,
                 CASE WHEN sup.suppression_id IS NOT NULL THEN true ELSE false END AS has_active_suppression,
+                {_DELETE_REQ_COLS}
                 CASE
                     WHEN lr.TestResult IS NULL       THEN 'nunca_rodou'
                     WHEN lr.TestResult = 'PASSED'    THEN 'sem_achados'
@@ -853,6 +872,7 @@ def list_tests(user: User = Depends(get_user)):
                 WHERE active = true
                 GROUP BY test_name
             ) fp_agg ON fp_agg.test_name = c.test_name
+            {_DELETE_REQ_JOIN}
             ORDER BY c.updated_at DESC
         """))
     except Exception as e1:
@@ -865,6 +885,7 @@ def list_tests(user: User = Depends(get_user)):
                     GREATEST(0, COALESCE(lr.IncidentCount, 0) - COALESCE(fp_agg.fp_count, 0))
                         AS last_incident_count,
                     false            AS has_active_suppression,
+                    {_DELETE_REQ_COLS}
                     CASE
                         WHEN lr.TestResult IS NULL       THEN 'nunca_rodou'
                         WHEN lr.TestResult = 'PASSED'    THEN 'sem_achados'
@@ -888,6 +909,7 @@ def list_tests(user: User = Depends(get_user)):
                     WHERE active = true
                     GROUP BY test_name
                 ) fp_agg ON fp_agg.test_name = c.test_name
+                {_DELETE_REQ_JOIN}
                 ORDER BY c.updated_at DESC
             """)
             return rows
