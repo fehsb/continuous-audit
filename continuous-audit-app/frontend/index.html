@@ -2076,8 +2076,8 @@ function TestDetail({test, user, risks, onClose, onEdit, onPause, onActivate, on
               )}
               {test.has_pending_review && showDiff ? (
                 <>
-                  <div className="sec-title">O que muda ({test.query_code===test.pending_query_code?"sem mudança na query":"— remove · + adiciona"})</div>
-                  <QueryDiff oldCode={test.query_code} newCode={test.pending_query_code}/>
+                  <div className="sec-title">O que muda ({test.query_code===test.pending_query_code?"sem mudança na query":"vigente × proposta"})</div>
+                  <QueryDiff oldCode={test.query_code} newCode={test.pending_query_code} oldLabel="Versão vigente" newLabel="Proposta"/>
                 </>
               ) : (
                 <>
@@ -2152,7 +2152,7 @@ function TestDetail({test, user, risks, onClose, onEdit, onPause, onActivate, on
           </div>
           <div className="modal-body">
             <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:6,fontFamily:"var(--mono)"}}>Diff (atual → v{restoreH.version})</div>
-            <QueryDiff oldCode={test.query_code} newCode={restoreH.query_code}/>
+            <QueryDiff oldCode={test.query_code} newCode={restoreH.query_code} oldLabel="Atual" newLabel={`v${restoreH.version}`}/>
           </div>
           <div className="modal-foot">
             <button className="btn btn-ghost" onClick={()=>setRestoreH(null)}>Cancelar</button>
@@ -2637,17 +2637,68 @@ function diffLines(oldStr, newStr) {
   while (j<k) out.push({t:"add",v:n[j++]});
   return out;
 }
-function QueryDiff({oldCode, newCode}) {
-  const rows = diffLines(oldCode, newCode);
+// Pareia o diff em linhas lado a lado: blocos de remoção/adição consecutivos viram
+// pares (linha alterada); o lado mais curto recebe linhas vazias de preenchimento.
+function sideBySide(rows) {
+  const out = []; let ln = 1, rn = 1, i = 0;
+  while (i < rows.length) {
+    if (rows[i].t === "ctx") { out.push({l:{n:ln++,v:rows[i].v,t:"ctx"}, r:{n:rn++,v:rows[i].v,t:"ctx"}}); i++; continue; }
+    const dels = [], adds = [];
+    while (i < rows.length && rows[i].t !== "ctx") { (rows[i].t === "del" ? dels : adds).push(rows[i].v); i++; }
+    for (let k = 0; k < Math.max(dels.length, adds.length); k++)
+      out.push({l: k < dels.length ? {n:ln++,v:dels[k],t:"del"} : null,
+                r: k < adds.length ? {n:rn++,v:adds[k],t:"add"} : null});
+  }
+  return out;
+}
+function copyText(txt) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(txt);
+  const ta = document.createElement("textarea"); ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); } finally { document.body.removeChild(ta); }
+  return Promise.resolve();
+}
+// Diff lado a lado: esquerda = versão atual, direita = versão nova. Cada coluna é um bloco
+// de texto próprio (selecionar com o mouse pega só aquele lado; números de linha e linhas
+// de preenchimento não entram na cópia) e tem botão para copiar o código completo.
+function QueryDiff({oldCode, newCode, oldLabel="Versão atual", newLabel="Versão nova", maxHeight=360}) {
+  const pairs = sideBySide(diffLines(oldCode, newCode));
+  const [copied, setCopied] = useState(null);
+  const doCopy = (side, txt) => copyText(txt||"").then(()=>{ setCopied(side); setTimeout(()=>setCopied(null), 1500); });
+  const ROW = 20;
+  const col = (side) => (
+    <div style={{flex:1,minWidth:0,overflowX:"auto",borderLeft: side==="r" ? "1px solid var(--border)" : "none"}}>
+      <div style={{display:"inline-block",minWidth:"100%"}}>
+        {pairs.map((p,i)=>{ const c = p[side];
+          if (!c) return <div key={i} style={{height:ROW,background:"repeating-linear-gradient(135deg,transparent 0 5px,var(--border) 5px 6px)",opacity:.5,userSelect:"none"}}/>;
+          const bg = c.t==="add" ? "var(--success-soft)" : c.t==="del" ? "var(--danger-soft)" : "transparent";
+          const fg = c.t==="add" ? "var(--success)" : c.t==="del" ? "var(--danger)" : "var(--text-muted)";
+          return (
+            <div key={i} style={{display:"flex",height:ROW,lineHeight:ROW+"px",background:bg,whiteSpace:"pre"}}>
+              <span style={{width:34,flexShrink:0,textAlign:"right",paddingRight:8,color:"var(--text-subtle)",userSelect:"none",opacity:.7}}>{c.n}</span>
+              <span style={{color:fg,paddingRight:12}}>{c.v || <br/>}</span>
+            </div>);
+        })}
+      </div>
+    </div>
+  );
+  const head = (side, label, txt) => (
+    <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"5px 10px",
+                 borderLeft: side==="r" ? "1px solid var(--border)" : "none",
+                 color: side==="r" ? "var(--success)" : "var(--danger)",fontWeight:600}}>
+      <span>{side==="r" ? "+ " : "− "}{label}</span>
+      <button className="btn btn-ghost btn-sm" style={{padding:"2px 8px",fontSize:11}} onClick={()=>doCopy(side, txt)}>
+        {copied===side ? "✓ Copiado" : "⧉ Copiar"}</button>
+    </div>
+  );
   return (
-    <div className="code-preview" style={{maxHeight:220,fontFamily:"var(--mono)",fontSize:12}}>
-      {rows.map((r,i)=>(
-        <div key={i} style={{whiteSpace:"pre-wrap",
-          background:r.t==="add"?"var(--success-soft)":r.t==="del"?"var(--danger-soft)":"transparent",
-          color:r.t==="add"?"var(--success)":r.t==="del"?"var(--danger)":"var(--text-muted)"}}>
-          {r.t==="add"?"+ ":r.t==="del"?"- ":"  "}{r.v}
-        </div>
-      ))}
+    <div style={{border:"1px solid var(--border)",borderRadius:"var(--rs)",fontFamily:"var(--mono)",fontSize:12,fontVariantLigatures:"none",overflow:"hidden"}}>
+      <div style={{display:"flex",borderBottom:"1px solid var(--border)",fontSize:11.5}}>
+        {head("l", oldLabel, oldCode)}{head("r", newLabel, newCode)}
+      </div>
+      <div style={{display:"flex",maxHeight,overflowY:"auto",padding:"6px 0"}}>
+        {col("l")}{col("r")}
+      </div>
     </div>
   );
 }
@@ -2764,10 +2815,10 @@ function ReviewQueue({tests, user, risks, onApprove, onReject, loading}) {
                           </ul>
                         : <span style={{fontSize:12.5,color:"var(--text-subtle)"}}>{queryChanged?"Somente a query foi alterada.":"Nenhuma diferença em relação à versão ativa."}</span>}
                     </div>
-                    <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:4,fontFamily:"var(--mono)"}}>Diff da query (— remove · + adiciona)</div>
+                    <div style={{fontSize:11,color:"var(--text-subtle)",marginBottom:4,fontFamily:"var(--mono)"}}>Diff da query (esquerda: versão ativa · direita: proposta)</div>
                     <div style={{marginBottom:12}}>
                       {queryChanged
-                        ? <QueryDiff oldCode={t.query_code} newCode={t.pending_query_code}/>
+                        ? <QueryDiff oldCode={t.query_code} newCode={t.pending_query_code} oldLabel="Versão ativa" newLabel="Proposta"/>
                         : <span style={{fontSize:12.5,color:"var(--text-subtle)"}}>Query sem alterações.</span>}
                     </div>
                     <RunPreviewInline test={{...t, query_type: t.pending_query_type||t.query_type, imports: t.pending_imports, query_code: t.pending_query_code}}/>
