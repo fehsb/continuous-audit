@@ -465,8 +465,33 @@ const api = {
 // statement) instead of a substring block-list, so columns like created_at / updated_at
 // and functions like replace() no longer trip false positives.
 const PY_BLK  = ["os.system","subprocess","__import__","open(","eval(","exec(",".write.","saveAsTable","insertInto"];
+// Varredura caractere a caractere (espelho de _strip_sql_comments no backend):
+// remove comentários e esvazia o conteúdo de '...', "..." e `...`, para que um
+// ';' ou '--' dentro de texto — ex.: concat_ws('; ', ...) — não seja confundido
+// com separador de instruções ou comentário.
 function stripSqlComments(code) {
-  return (code||"").replace(/\/\*[\s\S]*?\*\//g," ").replace(/--[^\n]*/g," ");
+  const s = code || "", n = s.length;
+  let out = "", i = 0;
+  while (i < n) {
+    const c = s[i], nx = s[i+1];
+    if (c === "-" && nx === "-") {
+      const j = s.indexOf("\n", i); i = j < 0 ? n : j; out += " ";
+    } else if (c === "/" && nx === "*") {
+      const j = s.indexOf("*/", i+2); i = j < 0 ? n : j+2; out += " ";
+    } else if (c === "'" || c === '"' || c === "`") {
+      const q = c; out += q; i++;
+      while (i < n) {
+        const ch = s[i];
+        if (ch === "\\" && q !== "`" && i+1 < n) { out += "  "; i += 2; continue; }
+        if (ch === q) {
+          if (s[i+1] === q) { out += "  "; i += 2; continue; }
+          out += q; i++; break;
+        }
+        out += ch === "\n" ? "\n" : " "; i++;
+      }
+    } else { out += c; i++; }
+  }
+  return out;
 }
 function localValidate(type, imp, code) {
   if (type === "SQL") {
@@ -510,7 +535,7 @@ function AlertStatusBadge({status}) {
   return <span className={`badge badge-${m.cls}`} style={{gap:6}} title={m.desc||m.label}><span className="dot-ic"/>{m.label}</span>;
 }
 const R_CLS   = {PASSED:"cleared",FAILED:"flagged",ERROR:"error"};
-const CHG_LBL = {CREATED:"✦ Criado",EDITED:"✎ Editado",EDITED_PENDING_REVIEW:"✎ Alteração Submetida",SUBMITTED_FOR_REVIEW:"→ Submetido",APPROVED:"✓ Aprovado",REJECTED:"✕ Rejeitado",PAUSED:"⏸ Pausado",REACTIVATED:"▶ Reativado",CANCELLED:"⊗ Cancelamento Aprovado"};
+const CHG_LBL = {CREATED:"✦ Criado",EDITED:"✎ Editado",EDITED_PENDING_REVIEW:"✎ Alteração Submetida",SUBMITTED_FOR_REVIEW:"→ Submetido",EDITED_UNDER_REVIEW:"✎ Editado em Revisão",WITHDRAWN_FROM_REVIEW:"↩ Retirado da Revisão",APPROVED:"✓ Aprovado",REJECTED:"✕ Rejeitado",PAUSED:"⏸ Pausado",REACTIVATED:"▶ Reativado",CANCELLED:"⊗ Cancelamento Aprovado"};
 // Todas as datas/horas são exibidas em Brasília (GMT-3), independente do fuso
 // do navegador — a API entrega os instantes com offset -03:00 explícito.
 const TZ_BRT = {timeZone:"America/Sao_Paulo"};
@@ -678,6 +703,8 @@ function RiskCombobox({value, onChange, risks}) {
   const [fi, setFi]       = useState(0);
   const [typing, setTyping] = useState(false);
   const ref               = useRef();
+  // Campo do tipo escolha: só vale um RiskId existente no cadastro
+  const invalid = !!value && risksArr.length > 0 && !risksArr.some(r => r.RiskId === value);
 
   // Sync display label when not actively typing
   useEffect(() => {
@@ -741,7 +768,15 @@ function RiskCombobox({value, onChange, risks}) {
           setFi(0);
         }}
         onFocus={() => { setOpen(true); setTyping(false); }}
-        onBlur={() => setTimeout(()=>{ setTyping(false); }, 200)}
+        onBlur={() => setTimeout(()=>{
+          // Texto colado/digitado que corresponde exatamente a um risco (ID ou
+          // "ID — Título") é convertido na seleção; qualquer outro texto fica
+          // marcado como inválido e bloqueia a submissão.
+          const t = (q||"").trim().toLowerCase();
+          const hit = t && risksArr.find(r => (r.RiskId||"").toLowerCase()===t
+                                            || `${r.RiskId} — ${r.RiskTitle}`.toLowerCase()===t);
+          if (hit && hit.RiskId !== value) select(hit); else setTyping(false);
+        }, 200)}
         onKeyDown={e => {
           if (e.key==="ArrowDown"){e.preventDefault();setFi(f=>Math.min(f+1,filtered.length-1));}
           if (e.key==="ArrowUp")  {e.preventDefault();setFi(f=>Math.max(f-1,0));}
@@ -749,6 +784,11 @@ function RiskCombobox({value, onChange, risks}) {
           if (e.key==="Escape") { setOpen(false); setTyping(false); }
         }}
       />
+      {!open && invalid && (
+        <div style={{fontSize:11,color:"var(--danger)",marginTop:3}}>
+          ⚠ “{String(value).slice(0,60)}” não é um risco do cadastro — selecione uma opção da lista
+        </div>
+      )}
       {open && risksArr.length > 0 && (
         <div className="cb-dropdown">
           {filtered.length===0
@@ -792,15 +832,28 @@ function AreaSelect({value, onChange, areas}) {
   );
 }
 
+// Quem já tem uma alteração pendente num teste ativo/pausado reabre o editor a
+// partir da SUA proposta (não da versão no ar) — corrigir sem refazer tudo.
+const OWN_PENDING_FIELDS = ["query_type","imports","query_code","threshold","frequency","description","responsible_area","risco_id","category","should_activate_channel"];
+function withOwnPending(t, user) {
+  if (!t?.has_pending_review || !user?.email || t.pending_submitted_by !== user.email) return t;
+  const m = {...t};
+  OWN_PENDING_FIELDS.forEach(k => { const v = t[`pending_${k}`]; if (v !== null && v !== undefined) m[k] = v; });
+  return m;
+}
+
 // ── TestEditor ───────────────────────────────────────────────────────────────
 const EMPTY = {test_name:"",output_table_suffix:"",description:"",responsible_area:"",risco_id:"",threshold:0,frequency:"DAILY",query_type:"SQL",imports:"",query_code:"",category:"",should_activate_channel:true};
 
-function validateForm(form) {
+function validateForm(form, risks) {
   const errs = {};
+  const risksArr = Array.isArray(risks) ? risks : (risks?.data || []);
   if (!form.test_name?.trim())           errs.test_name         = "Obrigatório";
   if (!form.output_table_suffix?.trim()) errs.output_table      = "Obrigatório";
   if (!form.responsible_area?.trim())    errs.responsible_area  = "Obrigatório";
   if (!form.risco_id?.trim() || form.risco_id === "N/A") errs.risco_id = "Obrigatório";
+  else if (risksArr.length && !risksArr.some(r => r.RiskId === form.risco_id))
+    errs.risco_id = "Selecione um risco da lista — o valor digitado não existe no cadastro";
   if (!form.description?.trim())         errs.description       = "Obrigatório";
   if (!form.query_code?.trim())          errs.query_code        = "Obrigatório";
   return errs;
@@ -828,6 +881,7 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
 
   // F6 — testes ativos E pausados: edição vira pendência de revisão
   const isLive = isEdit && ["ACTIVE","PAUSED"].includes(form.status);
+  const inReview = isEdit && form.status === "UNDER_REVIEW";
 
   const set = (k,v) => {
     setForm(f=>({...f,[k]:v}));
@@ -859,10 +913,10 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
   function handleSubmit(doSubmit) {
     setSubmitErr("");
     if (doSubmit) {
-      const errs = validateForm(form);
+      const errs = validateForm(form, risks);
       if (Object.keys(errs).length) {
         setFieldErrs(errs);
-        setSubmitErr("Preencha todos os campos obrigatórios antes de submeter.");
+        setSubmitErr("Corrija os campos destacados antes de submeter.");
         return;
       }
       if (!tested) {
@@ -889,6 +943,11 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
         </div>
 
         <div className="modal-body">
+          {inReview && (
+            <div className="alert alert-info" style={{marginBottom:14}}>
+              ✎ Este teste está <strong>em revisão</strong>. <strong>Submeter</strong> mantém o teste na fila com as correções; <strong>Retirar da revisão</strong> salva como rascunho e o tira da fila até você submeter de novo.
+            </div>
+          )}
           {isLive && (
             <div className="alert alert-warn" style={{marginBottom:14}}>
               ⚠️ Este teste está <strong>{form.status==="PAUSED"?"pausado":"ativo"}</strong>. As alterações <strong>não entram no ar imediatamente</strong> — a versão aprovada continua valendo até um revisor aprovar esta mudança.
@@ -1100,7 +1159,7 @@ function TestEditor({test, risks, areas, onClose, onSave, saving}) {
             </button>
           ) : (
             <>
-              <button className="btn btn-ghost" onClick={()=>handleSubmit(false)} disabled={saving}>{saving?"Salvando...":"Salvar Rascunho"}</button>
+              <button className="btn btn-ghost" onClick={()=>handleSubmit(false)} disabled={saving}>{saving?"Salvando...":inReview?"Retirar da Revisão":"Salvar Rascunho"}</button>
               <button
                 className="btn btn-primary"
                 onClick={()=>handleSubmit(true)}
@@ -1886,7 +1945,9 @@ function TestDetail({test, user, risks, onClose, onEdit, onPause, onActivate, on
   useEffect(()=>{ if(tab==="history"&&history===null)    api.getHistory(test.test_id).then(setHist).catch(()=>setHist([])); },[tab]);
   useEffect(()=>{ if(tab==="executions"&&execs===null)   loadExecs(0); },[tab]);
 
-  const canEdit   = ["DRAFT","REJECTED","ACTIVE","PAUSED"].includes(test.status);  // F6
+  // F6 + edição em revisão: quem submeteu pode corrigir o teste enquanto aguarda revisão
+  const canEdit   = ["DRAFT","REJECTED","ACTIVE","PAUSED"].includes(test.status)
+                 || (test.status === "UNDER_REVIEW" && !!user?.email && test.created_by === user.email);
   const canDelete = ["ACTIVE","PAUSED","REJECTED","DRAFT"].includes(test.status);
   const canClone  = test.status !== "CANCELLED";                                   // X5
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -4417,7 +4478,7 @@ function App() {
 
       {editor!==null&&<TestEditor test={editor?.test_id?editor:null} risks={risks} areas={areas} onClose={()=>setEditor(null)} onSave={handleSave} saving={saving}/>}
 
-      {detail&&<TestDetail test={detail} user={user} risks={risks} toast={toast} onClone={handleClone} onClose={()=>setDetail(null)} onEdit={t=>{setDetail(null);setEditor(t);}} onPause={t=>doAction(()=>api.pause(t.test_id),`"${t.test_name}" pausado`)} onActivate={t=>doAction(()=>api.activate(t.test_id),`"${t.test_name}" reativado ✓`)} onRequestDelete={(t,reason)=>doAction(()=>api.requestDelete(t.test_id,reason),`Solicitação de exclusão enviada para revisão`)}/>}
+      {detail&&<TestDetail test={detail} user={user} risks={risks} toast={toast} onClone={handleClone} onClose={()=>setDetail(null)} onEdit={t=>{setDetail(null);setEditor(withOwnPending(t, user));}} onPause={t=>doAction(()=>api.pause(t.test_id),`"${t.test_name}" pausado`)} onActivate={t=>doAction(()=>api.activate(t.test_id),`"${t.test_name}" reativado ✓`)} onRequestDelete={(t,reason)=>doAction(()=>api.requestDelete(t.test_id,reason),`Solicitação de exclusão enviada para revisão`)}/>}
 
       <Toasts toasts={toasts} onDismiss={dismissToast}/>
     </>

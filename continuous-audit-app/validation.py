@@ -15,10 +15,52 @@ PYTHON_BLOCKED = [
 
 
 def _strip_sql_comments(code: str) -> str:
-    """Remove /* block */ and -- line comments so they can't hide a second statement."""
-    code = re.sub(r"/\*.*?\*/", " ", code, flags=re.DOTALL)
-    code = re.sub(r"--[^\n]*", " ", code)
-    return code
+    """Return the SQL with comments removed and string/identifier contents blanked.
+
+    A character-level scan (not regex) so that a ';', '--' or '/*' that lives
+    inside a literal — e.g. concat_ws('; ', ...) or LIKE '%--%' — is never
+    mistaken for a statement separator or a comment. Quotes are kept so the
+    statement shape is preserved; only what is between them becomes spaces.
+    Spark rules: '\\' escapes the next char inside '...' and "..."; a doubled
+    quote ('' or ``) also escapes.
+    """
+    out: list[str] = []
+    i, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        nxt = code[i + 1] if i + 1 < n else ""
+        if c == "-" and nxt == "-":                      # line comment
+            j = code.find("\n", i)
+            i = n if j < 0 else j
+            out.append(" ")
+        elif c == "/" and nxt == "*":                    # block comment
+            j = code.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+        elif c in "'\"`":                                # literal / quoted identifier
+            q = c
+            out.append(q)
+            i += 1
+            while i < n:
+                ch = code[i]
+                if ch == "\\" and q != "`" and i + 1 < n:
+                    out.append("  ")
+                    i += 2
+                    continue
+                if ch == q:
+                    if i + 1 < n and code[i + 1] == q:   # doubled quote = escaped
+                        out.append("  ")
+                        i += 2
+                        continue
+                    out.append(q)
+                    i += 1
+                    break
+                out.append("\n" if ch == "\n" else " ")
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def validate(query_type: str, imports: str | None, query_code: str | None) -> None:

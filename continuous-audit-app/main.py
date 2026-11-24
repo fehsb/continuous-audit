@@ -336,20 +336,42 @@ def _detect_risk_level_col() -> Optional[str]:
     return None
 
 
+def _load_risks():
+    try:
+        level_col = _detect_risk_level_col()
+        if level_col:
+            return db.query(
+                f"SELECT RiskId, RiskTitle, CAST(`{level_col}` AS STRING) AS RiskLevel "
+                f"FROM {T_RISKS} ORDER BY RiskId"
+            )
+        return db.query(f"SELECT RiskId, RiskTitle FROM {T_RISKS} ORDER BY RiskId")
+    except Exception as e:
+        return {"error": f"[{T_RISKS}] {str(e)}", "data": []}
+
+
 @app.get("/api/risks")
 def list_risks(user: User = Depends(get_user)):
-    def _load():
-        try:
-            level_col = _detect_risk_level_col()
-            if level_col:
-                return db.query(
-                    f"SELECT RiskId, RiskTitle, CAST(`{level_col}` AS STRING) AS RiskLevel "
-                    f"FROM {T_RISKS} ORDER BY RiskId"
-                )
-            return db.query(f"SELECT RiskId, RiskTitle FROM {T_RISKS} ORDER BY RiskId")
-        except Exception as e:
-            return {"error": f"[{T_RISKS}] {str(e)}", "data": []}
-    return _cached("risks", _load)
+    return _cached("risks", _load_risks)
+
+
+def _validate_risk_id(risco_id: Optional[str]) -> None:
+    """O Risco é uma escolha do cadastro (tb_risks), não texto livre.
+
+    Se o cadastro estiver indisponível, não bloqueia — o formulário já cai no
+    modo de digitação manual nesse caso e o revisor confere na fila.
+    """
+    rid = (risco_id or "").strip()
+    if not rid:
+        return
+    risks = _cached("risks", _load_risks)
+    if not isinstance(risks, list) or not risks:
+        return
+    if rid not in {r.get("RiskId") for r in risks}:
+        raise HTTPException(
+            400,
+            f"Risco '{rid[:60]}' não existe no cadastro de riscos — "
+            "selecione um risco da lista do campo ID do Risco.",
+        )
 
 
 @app.get("/api/areas")
@@ -776,7 +798,9 @@ def run_preview(body: RunPreviewIn,
             }
         try:
             sql = body.query_code.strip().rstrip(";")
-            rows = db.query_as(f"SELECT * FROM ({sql}) __preview LIMIT 10", token)
+            # Quebras de linha em volta: um "-- comentário" na última linha não
+            # pode engolir o ")" que fecha a subquery.
+            rows = db.query_as(f"SELECT * FROM (\n{sql}\n) __preview LIMIT 10", token)
             cols = list(rows[0].keys()) if rows else []
             return {"success": True, "row_count": len(rows), "columns": cols, "sample": rows}
         except Exception as e:
@@ -1241,6 +1265,7 @@ def create_test(body: TestIn, submit: bool = False, user: User = Depends(get_use
     _validate_required_fields(body, submit)
     _check_name_table_unique(body.test_name, body.output_table)
     if submit:
+        _validate_risk_id(body.risco_id)
         try:
             validation.validate(body.query_type, body.imports, body.query_code)
         except ValueError as e:
@@ -1285,10 +1310,20 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
     test = _require_test(test_id)
 
     # DRAFT/REJECTED: full edit, freely (draft or submit for review)
+    # UNDER_REVIEW: only whoever submitted it (created_by — the same person the
+    #         approve/reject rules treat as the author) may fix it while it waits;
+    #         "submit" keeps it in the queue, "draft" pulls it back out of review
     # ACTIVE/PAUSED (F6): any change becomes a PENDING edit that requires approval —
     #         the approved (live) version keeps running until a reviewer approves it
     # Other statuses: not editable
-    if test["status"] not in ("DRAFT", "REJECTED", "ACTIVE", "PAUSED"):
+    if test["status"] == "UNDER_REVIEW":
+        if test.get("created_by") != user.email:
+            raise HTTPException(
+                403,
+                f"Só quem submeteu o teste ({test.get('created_by') or '?'}) pode editá-lo "
+                "enquanto ele aguarda revisão.",
+            )
+    elif test["status"] not in ("DRAFT", "REJECTED", "ACTIVE", "PAUSED"):
         raise HTTPException(400, f"Testes com status '{test['status']}' não podem ser editados")
 
     now = now_brt()
@@ -1306,6 +1341,7 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
             )
         # An edit to a live test always goes to review, so enforce full validation.
         _validate_required_fields(body, submit=True)
+        _validate_risk_id(body.risco_id)
         try:
             validation.validate(body.query_type, body.imports, body.query_code)
         except ValueError as e:
@@ -1346,6 +1382,7 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
     _validate_required_fields(body, submit)
     _check_name_table_unique(body.test_name, body.output_table, exclude_id=test_id)
     if submit:
+        _validate_risk_id(body.risco_id)
         try:
             validation.validate(body.query_type, body.imports, body.query_code)
         except ValueError as e:
@@ -1387,9 +1424,13 @@ def edit_test(test_id: str, body: TestIn, submit: bool = False, user: User = Dep
         "now": now, "version": new_version, "test_id": test_id,
     })
 
+    if test["status"] == "UNDER_REVIEW":
+        change = "EDITED_UNDER_REVIEW" if submit else "WITHDRAWN_FROM_REVIEW"
+    else:
+        change = "SUBMITTED_FOR_REVIEW" if submit else "EDITED"
     _insert_history(test_id, body.test_name, new_version, body.query_type,
                     body.imports, body.query_code, test["status"], status,
-                    "SUBMITTED_FOR_REVIEW" if submit else "EDITED", user.email)
+                    change, user.email)
     return {"test_id": test_id, "status": status}
 
 
