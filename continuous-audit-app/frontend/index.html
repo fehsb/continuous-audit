@@ -1735,6 +1735,12 @@ function SuppressionTab({testId, testName, toast=()=>{}}) {
   const [acting, setActing]             = useState(null);
   const entryRef = useRef();
 
+  // Títulos do SharePoint às vezes vêm com quebra de linha no fim; num <input> o
+  // navegador descarta o "\n", o React vê o valor mudar, dispara onChange e a
+  // seleção era apagada (Salvar ficava desabilitado sem aviso). Normaliza aqui.
+  const cleanTitle = t => String(t||"").replace(/\s+/g," ").trim();
+  const entryLabel = e => `${e.RiskEntryId} — ${cleanTitle(e.RiskEntryTitle)}`;
+
   function load() {
     api.listSuppressions(testId)
       .then(r => setSuppressions(Array.isArray(r) ? r : r?.data || []))
@@ -1759,10 +1765,11 @@ function SuppressionTab({testId, testName, toast=()=>{}}) {
     try {
       await api.createSuppression(testId, {
         linked_entry_id:    selected.RiskEntryId,
-        linked_entry_title: selected.RiskEntryTitle,
+        linked_entry_title: cleanTitle(selected.RiskEntryTitle),
         note,
       });
       setShowAdd(false); setEntryQ(""); setSelected(null); setNote("");
+      toast(`Apontamento ${selected.RiskEntryId} vinculado ✓`);
       load();
     } catch(e) {
       toast(e.message || "Não foi possível vincular o apontamento", "error");
@@ -1842,14 +1849,19 @@ function SuppressionTab({testId, testName, toast=()=>{}}) {
                 className="field-input"
                 placeholder="Buscar por ID (GRCAP-...) ou título..."
                 value={entryQ}
-                onChange={e=>{setEntryQ(e.target.value);setSelected(null);}}
+                onChange={e=>{
+                  const v = e.target.value;
+                  setEntryQ(v);
+                  // só desfaz a seleção se o usuário realmente editou o texto
+                  if (selected && v.trim() !== entryLabel(selected)) setSelected(null);
+                }}
               />
               {entries.length>0 && !selected && (
                 <div className="cb-dropdown">
                   {entries.map(e=>(
-                    <div key={e.RiskEntryId} className="cb-item" onMouseDown={()=>{setSelected(e);setEntryQ(`${e.RiskEntryId} — ${e.RiskEntryTitle}`);}}>
+                    <div key={e.RiskEntryId} className="cb-item" onMouseDown={()=>{setSelected(e);setEntryQ(entryLabel(e));}}>
                       <span style={{fontFamily:"var(--mono)",fontSize:10.5,color:"var(--primary)",marginRight:8}}>{e.RiskEntryId}</span>
-                      <span>{e.RiskEntryTitle}</span>
+                      <span>{cleanTitle(e.RiskEntryTitle)}</span>
                       {e.Criticality&&<span style={{marginLeft:"auto",fontSize:10.5,color:"var(--text-subtle)"}}>{e.Criticality}</span>}
                     </div>
                   ))}
@@ -1858,7 +1870,7 @@ function SuppressionTab({testId, testName, toast=()=>{}}) {
             </div>
             {selected && (
               <div style={{marginTop:6,padding:"8px 12px",background:"var(--primary-soft)",borderRadius:"var(--rs)",fontSize:12}}>
-                ✓ <strong>{selected.RiskEntryId}</strong> — {selected.RiskEntryTitle}
+                ✓ <strong>{selected.RiskEntryId}</strong> — {cleanTitle(selected.RiskEntryTitle)}
                 {selected.ImplementationDeadline&&<span style={{marginLeft:8,color:"var(--text-muted)"}}>Prazo: {selected.ImplementationDeadline}</span>}
               </div>
             )}
@@ -1870,9 +1882,15 @@ function SuppressionTab({testId, testName, toast=()=>{}}) {
           </div>
 
           <div style={{display:"flex",gap:8}}>
-            <button className="btn btn-warning" onClick={addSuppression} disabled={!selected||saving}>
+            <button className="btn btn-warning" onClick={addSuppression} disabled={!selected||saving}
+                    title={!selected ? "Selecione um apontamento na lista de resultados" : undefined}>
               {saving?"Salvando...":"Salvar Supressão"}
             </button>
+            {!selected && entryQ.trim() && (
+              <span style={{alignSelf:"center",fontSize:12,color:"var(--warning)"}}>
+                ⚠ Clique em um apontamento da lista para selecioná-lo
+              </span>
+            )}
             <button className="btn btn-ghost" onClick={()=>{setShowAdd(false);setEntryQ("");setSelected(null);setNote("");}}>
               Cancelar
             </button>

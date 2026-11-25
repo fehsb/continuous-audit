@@ -611,6 +611,11 @@ def get_dashboard(
 # ─────────────────────────────────────────────────────────────────────────────
 # Routes — risk entries (for suppression linking)
 # ─────────────────────────────────────────────────────────────────────────────
+def _one_line(text) -> str:
+    """Colapsa espaços/quebras de linha (títulos do SharePoint vêm com '\\n')."""
+    return " ".join(str(text or "").split())
+
+
 @app.get("/api/risk-entries")
 def search_risk_entries(q: str = "", open_only: bool = True, user: User = Depends(get_user)):
     """Search risk entries by RiskEntryId or title. open_only=True filters to open entries."""
@@ -623,7 +628,7 @@ def search_risk_entries(q: str = "", open_only: bool = True, user: User = Depend
         if open_only:
             where_clauses.append("(ClosingDate IS NULL OR TRIM(COALESCE(ClosingDate,'')) = '')")
         where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-        return db.query(f"""
+        rows = db.query(f"""
             SELECT RiskEntryId, RiskEntryTitle, Criticality, ResponsibleArea,
                    OpeningDate, ClosingDate, ImplementationDeadline
             FROM {T_ENTRIES}
@@ -631,6 +636,10 @@ def search_risk_entries(q: str = "", open_only: bool = True, user: User = Depend
             ORDER BY RiskEntryId
             LIMIT 50
         """, params)
+        # Títulos do SharePoint podem vir com "\n" no fim — quebrava a seleção no front.
+        for r in rows:
+            r["RiskEntryTitle"] = _one_line(r.get("RiskEntryTitle"))
+        return rows
     except Exception as e:
         return {"error": f"[{T_ENTRIES}] {str(e)}", "data": []}
 
@@ -642,7 +651,7 @@ def search_risk_entries(q: str = "", open_only: bool = True, user: User = Depend
 def list_suppressions(test_id: str, user: User = Depends(get_user)):
     """List all suppressions for a test, including current entry status."""
     try:
-        return db.query(f"""
+        rows = db.query(f"""
             SELECT
                 s.*,
                 e.RiskEntryTitle  AS entry_title,
@@ -657,6 +666,9 @@ def list_suppressions(test_id: str, user: User = Depends(get_user)):
             WHERE s.test_id = %(test_id)s
             ORDER BY s.created_at DESC
         """, {"test_id": test_id})
+        for r in rows:
+            r["entry_title"] = _one_line(r.get("entry_title"))
+        return rows
     except Exception as e:
         return {"error": str(e), "data": []}
 
@@ -664,6 +676,21 @@ def list_suppressions(test_id: str, user: User = Depends(get_user)):
 @app.post("/api/tests/{test_id}/suppressions", status_code=201)
 def create_suppression(test_id: str, body: SuppressionIn, user: User = Depends(get_user)):
     test = _require_test(test_id)
+    entry_id = (body.linked_entry_id or "").strip()
+    if not entry_id:
+        raise HTTPException(400, "Selecione um apontamento de risco.")
+    try:
+        found = db.query(f"""
+            SELECT RiskEntryId, ClosingDate FROM {T_ENTRIES}
+            WHERE RiskEntryId = %(id)s LIMIT 1
+        """, {"id": entry_id})
+    except Exception:
+        found = None   # cadastro indisponível: não bloqueia o vínculo
+    if found is not None:
+        if not found:
+            raise HTTPException(400, f"Apontamento '{entry_id}' não existe no cadastro de apontamentos.")
+        if str(found[0].get("ClosingDate") or "").strip():
+            raise HTTPException(400, f"Apontamento '{entry_id}' já está fechado — vincule um apontamento aberto.")
     now  = now_brt()
     suppression_id = str(uuid.uuid4())
     db.execute(f"""
@@ -675,9 +702,9 @@ def create_suppression(test_id: str, body: SuppressionIn, user: User = Depends(g
         "id":          suppression_id,
         "test_id":     test_id,
         "test_name":   test["test_name"],
-        "entry_id":    body.linked_entry_id,
-        "entry_title": body.linked_entry_title or "",
-        "note":        body.note or "",
+        "entry_id":    entry_id,
+        "entry_title": _one_line(body.linked_entry_title),
+        "note":        (body.note or "").strip(),
         "by":          user.email,
         "now":         now,
     })
