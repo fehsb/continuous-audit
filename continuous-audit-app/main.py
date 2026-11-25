@@ -340,11 +340,17 @@ def _load_risks():
     try:
         level_col = _detect_risk_level_col()
         if level_col:
-            return db.query(
+            rows = db.query(
                 f"SELECT RiskId, RiskTitle, CAST(`{level_col}` AS STRING) AS RiskLevel "
                 f"FROM {T_RISKS} ORDER BY RiskId"
             )
-        return db.query(f"SELECT RiskId, RiskTitle FROM {T_RISKS} ORDER BY RiskId")
+        else:
+            rows = db.query(f"SELECT RiskId, RiskTitle FROM {T_RISKS} ORDER BY RiskId")
+        # Títulos do SharePoint podem vir com espaço/quebra de linha sobrando;
+        # quebra de linha no <input> do RiskCombobox desfaria a seleção.
+        for r in rows:
+            r["RiskTitle"] = _one_line(r.get("RiskTitle"))
+        return rows
     except Exception as e:
         return {"error": f"[{T_RISKS}] {str(e)}", "data": []}
 

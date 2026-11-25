@@ -345,7 +345,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useCallback, useRef } = React;
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
 // ── Shared hooks ─────────────────────────────────────────────────────────────
 // Close a modal on Escape (#5). Uses a mount-ordered stack so Esc only closes
@@ -693,9 +693,14 @@ const Toasts = ({toasts, onDismiss}) => (
 );
 
 // ── RiskCombobox ─────────────────────────────────────────────────────────────
+// Título em uma linha: num <input>, "\n" é descartado pelo navegador, o React
+// dispara onChange e a seleção era trocada pelo texto (ver vínculo de apontamento).
+const oneLine = t => String(t||"").replace(/\s+/g," ").trim();
+
 function RiskCombobox({value, onChange, risks}) {
   // risks can be: array | {error, data:[]} | []
-  const risksArr  = Array.isArray(risks) ? risks : (risks?.data || []);
+  const risksArr  = useMemo(() => (Array.isArray(risks) ? risks : (risks?.data || []))
+    .map(r => ({...r, RiskTitle: oneLine(r.RiskTitle)})), [risks]);
   const risksErr  = risks?.error || null;
 
   const [q, setQ]         = useState("");
